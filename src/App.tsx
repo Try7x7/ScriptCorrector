@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Upload, FileAudio, FileText, CheckCircle2, Loader2, AlertCircle, Copy, RefreshCw, Eye, Hash, Download, FileDown } from 'lucide-react';
 import { formatSubtitles, downloadSrtFile, downloadTxtFile } from './utils/subtitleFormatter';
+import appIcon from './assets/images/script_corrector_icon_1791735239310.jpg';
 
 export default function App() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
@@ -329,11 +330,13 @@ export default function App() {
     <div className="min-h-screen bg-zinc-50 text-zinc-900 font-sans">
       <header className="bg-white border-b border-zinc-200 px-6 py-4 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white">
-              <CheckCircle2 size={20} />
-            </div>
-            <h1 className="text-xl font-semibold tracking-tight">口播稿校正工具 (Script Corrector)</h1>
+          <div className="flex items-center gap-3">
+            <img 
+              src={appIcon} 
+              alt="Script Corrector Icon" 
+              className="w-9 h-9 rounded-xl shadow-xs object-cover border border-zinc-200"
+            />
+            <h1 className="text-xl font-semibold tracking-tight">Script Corrector (口播稿校对工具-法语)</h1>
           </div>
         </div>
       </header>

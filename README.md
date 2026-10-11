@@ -1,5 +1,9 @@
 # Script Corrector (口播稿校对工具-法语)
 
+<p align="center">
+  <img src="./src/assets/images/script_corrector_icon_1791735239310.jpg" alt="Script Corrector Icon" width="128" height="128" style="border-radius: 24px;" />
+</p>
+
 一个专为口播音频、演讲和神学录音打造的高精度语音转录与字幕智能校对工具。系统结合 **Gladia ASR** 语音识别与 **Google Gemini** 大语言模型，针对原始文案与实际发音进行“双重标准”智能对齐校正，并提供符合现代影视/自媒体规范的自动化字幕断行与 SRT/TXT 导出能力。
 
 ---

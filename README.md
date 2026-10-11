@@ -1,10 +1,29 @@
 # Script Corrector (口播稿校对工具-法语) `v1.0.0`
 
 <p align="center">
-  <img src="./src/assets/images/script_corrector_icon_1791735239310.jpg" alt="Script Corrector Icon" width="128" height="128" style="border-radius: 24px;" />
+  <img src="./src/assets/images/script_corrector_icon_1791735239310.jpg" alt="Script Corrector Icon" width="128" height="128" style="border-radius: 24px;" /><br/><br/>
+  <a href="https://aistudio.google.com/">
+    <img src="https://img.shields.io/badge/Open%20in-Google%20AI%20Studio-4285F4?style=for-the-badge&logo=google&logoColor=white" alt="Open in Google AI Studio" />
+  </a>
 </p>
 
 一个专为口播音频、演讲和神学录音打造的高精度语音转录与字幕智能校对工具。系统结合 **Gladia ASR** 语音识别与 **Google Gemini** 大语言模型，针对原始文案与实际发音进行“双重标准”智能对齐校正，并提供符合现代影视/自媒体规范的自动化字幕断行与 SRT/TXT 导出能力。
+
+---
+
+## 🚀 一键部署与在线访问 (One-Click Deploy & Access)
+
+### GitHub 仓库一键导入到全新 AI Studio 项目
+如果您希望将本项目复制或一键导入到自己的 Google AI Studio 账号中运行：
+
+1. **直接导入**：
+   - 打开 [Google AI Studio 控制台 (aistudio.google.com)](https://aistudio.google.com/)；
+   - 点击左侧菜单栏的 **Build** -> **Import from GitHub**；
+   - 粘贴本项目的 GitHub 仓库链接，点击导入确认。
+2. **零配置自动初始化**：
+   - 平台将自动识别项目配置 (`metadata.json` 与 `package.json`)；
+   - 自动拉取依赖、挂载服务端 Gemini API 凭证通道；
+   - 弹出 `Enter your environment variable to continue: GLADIA_API_KEY` 提示，填入您的 Gladia Key 即可在 1 分钟内完成全量部署与启动！
 
 ---
 

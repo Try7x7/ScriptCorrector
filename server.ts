@@ -7,6 +7,7 @@ import * as dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 import path from "path";
 import { fileURLToPath } from "url";
+import rateLimit from "express-rate-limit";
 
 dotenv.config();
 
@@ -15,48 +16,39 @@ const __dirname = path.dirname(__filename);
 
 const PORT = 3000;
 
-// Security: In-memory sliding window rate limiter
-interface RateLimitRecord {
-  count: number;
-  resetTime: number;
-}
-const rateLimitMap = new Map<string, RateLimitRecord>();
-
-function createRateLimiter(windowMs: number, maxRequests: number, endpointName: string) {
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const ip = req.ip || req.socket.remoteAddress || "unknown";
-    const key = `${endpointName}:${ip}`;
-    const now = Date.now();
-    const record = rateLimitMap.get(key);
-
-    if (!record || now > record.resetTime) {
-      rateLimitMap.set(key, { count: 1, resetTime: now + windowMs });
-      return next();
-    }
-
-    if (record.count >= maxRequests) {
-      const retryAfter = Math.ceil((record.resetTime - now) / 1000);
-      res.setHeader("Retry-After", String(retryAfter));
-      return res.status(429).json({
-        error: "请求过于频繁 (Too Many Requests)",
-        details: `已超出请求速率限制，请在 ${retryAfter} 秒后再试。`
-      });
-    }
-
-    record.count++;
-    next();
-  };
-}
-
-// Clean up stale rate-limit records every 60 seconds
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, record] of rateLimitMap.entries()) {
-    if (now > record.resetTime) {
-      rateLimitMap.delete(key);
-    }
+// Security: Standard rate limiters using express-rate-limit to mitigate DoS (CodeQL js/missing-rate-limiting)
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 1000, // 1000 requests per 15 minutes per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "请求过于频繁 (Too Many Requests)",
+    details: "超出常规访问速率限制，请稍后再试。"
   }
-}, 60000);
+});
+
+const transcribeLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 12, // 12 transcription uploads per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "请求过于频繁 (Too Many Requests)",
+    details: "已超出音频转录速率限制，请稍后再试。"
+  }
+});
+
+const correctLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20, // 20 text corrections per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "请求过于频繁 (Too Many Requests)",
+    details: "已超出文本校对速率限制，请稍后再试。"
+  }
+});
 
 // Security: Allowed audio MIME types and file extensions
 const ALLOWED_MIME_TYPES = new Set([
@@ -210,6 +202,9 @@ async function startServer() {
     next();
   });
 
+  // Security: Apply general rate limiter across all requests to protect file serving & mitigate DoS (CodeQL js/missing-rate-limiting)
+  app.use(generalLimiter);
+
   // Security: Limit JSON payload to 2MB to prevent memory exhaustion DoS
   app.use(express.json({ limit: "2mb" }));
   app.use(express.urlencoded({ extended: true, limit: "2mb" }));
@@ -224,13 +219,10 @@ async function startServer() {
 
   // Health check route
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", timestamp: new Date().toISOString() });
+    res.json({ status: "ok", version: "1.0.0", timestamp: new Date().toISOString() });
   });
 
   // API route to handle audio upload and transcription
-  // Rate limit: max 12 transcription requests per minute per IP
-  const transcribeLimiter = createRateLimiter(60000, 12, "transcribe");
-
   app.post(["/api/transcribe", "/api/transcribe/"], transcribeLimiter, (req, res, next) => {
     upload.single("audio")(req, res, (err) => {
       if (err) {
@@ -301,6 +293,11 @@ async function startServer() {
 
       if (!audioUrl || typeof audioUrl !== "string") {
         throw new Error("Failed to get audio_url from Gladia upload response");
+      }
+
+      const parsedAudioUrl = new URL(audioUrl);
+      if (parsedAudioUrl.protocol !== "https:") {
+        throw new Error("Invalid audio_url protocol returned by upload service");
       }
 
       // Step 2: Start transcription
@@ -426,9 +423,6 @@ async function startServer() {
   });
 
   // API route for text correction using Gemini
-  // Rate limit: max 20 correction requests per minute per IP
-  const correctLimiter = createRateLimiter(60000, 20, "correct");
-
   // Allowed models allowlist to prevent arbitrary model specification
   const ALLOWED_MODELS = new Set([
     "gemini-3.6-flash",
@@ -570,8 +564,8 @@ async function startServer() {
     const distPath = path.resolve(__dirname, "dist");
     app.use(express.static(distPath));
     
-    // SPA fallback for production
-    app.get("*", (req, res, next) => {
+    // SPA fallback for production (rate limited to resolve CodeQL js/missing-rate-limiting)
+    app.get("*", generalLimiter, (req, res, next) => {
       if (req.url.startsWith("/api/")) return next();
       res.sendFile(path.join(distPath, "index.html"));
     });

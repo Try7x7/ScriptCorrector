@@ -1,4 +1,4 @@
-# Script Corrector (口播稿校对工具-法语)
+# Script Corrector (口播稿校对工具-法语) `v1.0.0`
 
 <p align="center">
   <img src="./src/assets/images/script_corrector_icon_1791735239310.jpg" alt="Script Corrector Icon" width="128" height="128" style="border-radius: 24px;" />

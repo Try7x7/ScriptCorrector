@@ -3,6 +3,14 @@ import { Upload, FileAudio, FileText, CheckCircle2, Loader2, AlertCircle, Copy, 
 import { formatSubtitles, downloadSrtFile, downloadTxtFile } from './utils/subtitleFormatter';
 import appIcon from './assets/images/script_corrector_icon_1791735239310.jpg';
 
+interface AppErrorInfo {
+  title: string;
+  statusCode?: number | string;
+  suspectedReason: string;
+  quotaHint?: string;
+  details?: string;
+}
+
 export default function App() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioDuration, setAudioDuration] = useState<number | null>(null);
@@ -15,7 +23,10 @@ export default function App() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isCorrecting, setIsCorrecting] = useState(false);
   const [isWakingUp, setIsWakingUp] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorInfo, setErrorInfo] = useState<AppErrorInfo | null>(null);
+
+  const clearError = () => setErrorInfo(null);
+  const setSimpleError = (msg: string) => setErrorInfo({ title: msg, suspectedReason: msg });
   
   // Output Settings
   const [enableLineBreaks, setEnableLineBreaks] = useState(true);
@@ -72,9 +83,9 @@ export default function App() {
       if (file.type.startsWith('audio/')) {
         setAudioFile(file);
         extractAudioDuration(file);
-        setError(null);
+        clearError();
       } else {
-        setError('请上传音频文件 (Please upload an audio file)');
+        setSimpleError('请上传音频文件 (Please upload an audio file)');
       }
     }
   };
@@ -119,7 +130,7 @@ export default function App() {
       const file = e.target.files[0];
       setAudioFile(file);
       extractAudioDuration(file);
-      setError(null);
+      clearError();
     }
   };
 
@@ -147,20 +158,20 @@ export default function App() {
 
   const handleProcess = async () => {
     if (!audioFile) {
-      setError('请上传音频文件 (Please upload an audio file)');
+      setSimpleError('请上传音频文件 (Please upload an audio file)');
       return;
     }
     if (!textB.trim()) {
-      setError('请输入文字稿 (Please enter the reference text)');
+      setSimpleError('请输入文字稿 (Please enter the reference text)');
       return;
     }
 
     if (gladiaApiKeyInput.trim() && !/^[a-zA-Z0-9_\-]{16,128}$/.test(gladiaApiKeyInput.trim())) {
-      setError('自定义 Gladia API Key 格式无效，请检查是否包含空格或特殊字符。');
+      setSimpleError('自定义 Gladia API Key 格式无效，请检查是否包含空格或特殊字符。');
       return;
     }
 
-    setError(null);
+    clearError();
     setTextA('');
     setTextC('');
     setDiffText('');
@@ -195,32 +206,55 @@ export default function App() {
         body: formData,
       });
 
+      const rawText = await response.text();
+      let responseData: any = null;
+      try {
+        responseData = JSON.parse(rawText);
+      } catch {
+        if (rawText.includes("Starting Server") || rawText.includes("Please wait while your application starts")) {
+          setErrorInfo({
+            title: "服务容器正在唤醒中 (Server Starting)",
+            statusCode: "Starting (200)",
+            suspectedReason: "当前开发环境后端刚刚完成重启或唤醒，网关正在建立连接。本次请求未发送至模型端点，未消耗任何额度。",
+            quotaHint: "容器完全就绪通常只需 2~3 秒。请稍候 3 秒后直接重新点击「开始智能校对」。",
+            details: "Gateway returned Starting Server HTML page with status 200."
+          });
+          setIsTranscribing(false);
+          return;
+        }
+        if (rawText.trim().startsWith('<!doctype') || rawText.trim().startsWith('<html')) {
+          setErrorInfo({
+            title: "服务网关返回非预期页面",
+            statusCode: response.status,
+            suspectedReason: "请求被上游云端代理网关拦截（返回了 HTML 页面而不是 JSON 数据）。此情况通常发生在网络节点短暂抖动或服务重启瞬间，未实际调用语音识别模型，未消耗配额。",
+            quotaHint: "请等待 3 秒后刷新页面或重新尝试。",
+            details: rawText.substring(0, 200)
+          });
+          setIsTranscribing(false);
+          return;
+        }
+        throw new Error(`服务器返回非标准格式 (${response.status}): ${rawText.substring(0, 100)}`);
+      }
+
       if (!response.ok) {
-        let errorMsg = 'Transcription failed';
-        try {
-          const errorData = await response.json();
-          errorMsg = errorData.error || errorMsg;
-          if (errorData.details) {
-            errorMsg += ` (${typeof errorData.details === 'object' ? JSON.stringify(errorData.details) : errorData.details})`;
-          }
-        } catch (e) {
-          const text = await response.text();
-          errorMsg = `Server error (${response.status}): ${text.substring(0, 100)}`;
-        }
-        throw new Error(errorMsg);
+        const errorTitle = responseData?.error || '语音识别请求失败';
+        const code = responseData?.statusCode || response.status;
+        const reason = responseData?.suspectedReason || responseData?.details || '语音识别服务发生异常。';
+        const quotaHint = responseData?.quotaHint || '请前往 Gladia 控制台检查可用时长额度。';
+        const details = typeof responseData?.details === 'object' ? JSON.stringify(responseData?.details) : (responseData?.details || rawText);
+
+        setErrorInfo({
+          title: errorTitle,
+          statusCode: code,
+          suspectedReason: reason,
+          quotaHint,
+          details
+        });
+        setIsTranscribing(false);
+        return;
       }
 
-      const contentType = response.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/json")) {
-        const text = await response.text();
-        if (text.trim().startsWith('<!doctype html') || text.trim().startsWith('<html')) {
-           throw new Error('服务器连接异常 (Server returned HTML)。请尝试刷新页面或稍后重试。');
-        }
-        throw new Error(`Unexpected response format (expected JSON, got ${contentType}): ${text.substring(0, 200)}`);
-      }
-
-      const data = await response.json();
-      transcribedText = data.text;
+      transcribedText = responseData.text || '';
       setTextA(transcribedText);
       setIsTranscribing(false);
 
@@ -228,14 +262,20 @@ export default function App() {
       await runGemini(transcribedText);
     } catch (err: any) {
       console.error(err);
-      setError(`语音识别失败: ${err.message}`);
+      setErrorInfo(prev => prev || {
+        title: '语音识别请求失败',
+        statusCode: 'Client/Network Error',
+        suspectedReason: err.message || '网络连接或客户端解析异常。',
+        quotaHint: '建议检查网络连接或刷新页面后重试。',
+        details: String(err?.stack || err)
+      });
       setIsTranscribing(false);
     }
   };
 
   const runGemini = async (transcribedText: string) => {
     setIsCorrecting(true);
-    setError(null);
+    clearError();
     try {
       const response = await fetch('/api/correct', {
         method: 'POST',
@@ -253,27 +293,59 @@ export default function App() {
             visualOptStart,
             visualOptEnd
           },
-          model: 'gemini-3.6-flash',
+          model: 'gemini-3.8-flash',
         }),
       });
 
-      if (!response.ok) {
-        let errorMsg = 'Correction failed';
-        try {
-          const errorData = await response.json();
-          errorMsg = errorData.error || errorData.details || errorMsg;
-          if (errorData.details) {
-            errorMsg += ` (${errorData.details})`;
-          }
-        } catch (e) {
-          const text = await response.text();
-          errorMsg = `Server error (${response.status}): ${text.substring(0, 100)}`;
+      const rawText = await response.text();
+      let responseData: any = null;
+      try {
+        responseData = JSON.parse(rawText);
+      } catch {
+        if (rawText.includes("Starting Server") || rawText.includes("Please wait while your application starts")) {
+          setErrorInfo({
+            title: "服务容器正在唤醒中 (Server Starting)",
+            statusCode: "Starting (200)",
+            suspectedReason: "当前开发环境后端刚刚完成重启或唤醒，网关正在建立连接。本次请求未发送至模型端点，未消耗任何额度。",
+            quotaHint: "容器完全就绪通常只需 2~3 秒。请稍候 3 秒后直接重新点击「开始智能校对」。",
+            details: "Gateway returned Starting Server HTML page with status 200."
+          });
+          setIsCorrecting(false);
+          return;
         }
-        throw new Error(errorMsg);
+        if (rawText.trim().startsWith('<!doctype') || rawText.trim().startsWith('<html')) {
+          setErrorInfo({
+            title: "服务网关返回非预期页面",
+            statusCode: response.status,
+            suspectedReason: "请求被上游云端代理网关拦截（返回了 HTML 页面而不是 JSON 数据）。此情况通常发生在网络节点短暂抖动或服务重启瞬间，未实际调用 Gemini 模型，未消耗配额。",
+            quotaHint: "请等待 3 秒后刷新页面或重新尝试。",
+            details: rawText.substring(0, 200)
+          });
+          setIsCorrecting(false);
+          return;
+        }
+        throw new Error(`服务返回非标准格式 (${response.status}): ${rawText.substring(0, 100)}`);
       }
 
-      const data = await response.json();
-      const responseText = data.text || '{}';
+      if (!response.ok) {
+        const errorTitle = responseData?.error || '文本校对失败';
+        const code = responseData?.statusCode || response.status;
+        const reason = responseData?.suspectedReason || responseData?.details || '模型在处理校对请求时发生异常。';
+        const quotaHint = responseData?.quotaHint || '请前往 Google AI Studio (aistudio.google.com) 控制台检查当前账号的 RPM (每分钟请求数) 与 RPD (每日配额) 使用量。';
+        const details = typeof responseData?.details === 'object' ? JSON.stringify(responseData?.details) : (responseData?.details || rawText);
+
+        setErrorInfo({
+          title: errorTitle,
+          statusCode: code,
+          suspectedReason: reason,
+          quotaHint,
+          details
+        });
+        setIsCorrecting(false);
+        return;
+      }
+
+      const responseText = responseData?.text || '{}';
       
       try {
         const result = JSON.parse(responseText);
@@ -306,18 +378,24 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      setError(`文本校正失败: ${err.message}`);
+      setErrorInfo(prev => prev || {
+        title: '文本校对异常',
+        statusCode: 'Client/Network Error',
+        suspectedReason: err.message || '网络连接或客户端处理发生异常。',
+        quotaHint: '请前往 Google AI Studio 检查当前账号配额进度条，或刷新页面后重试。',
+        details: String(err?.stack || err)
+      });
     }
     setIsCorrecting(false);
   };
 
   const handleProcessGeminiOnly = async () => {
     if (!textB.trim()) {
-      setError('请输入文字稿 (Please enter the reference text)');
+      setSimpleError('请输入文字稿 (Please enter the reference text)');
       return;
     }
 
-    setError(null);
+    clearError();
     setTextC('');
     setDiffText('');
 
@@ -347,10 +425,60 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8">
-        {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 text-red-700">
-            <AlertCircle className="shrink-0 mt-0.5" size={20} />
-            <p className="text-sm">{error}</p>
+        {errorInfo && (
+          <div className="mb-6 p-5 bg-red-50/90 border border-red-200 rounded-2xl shadow-xs text-red-900 transition-all">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3 flex-1">
+                <div className="p-2.5 bg-red-100 rounded-xl text-red-600 shrink-0 mt-0.5">
+                  <AlertCircle size={22} />
+                </div>
+                <div className="space-y-3 flex-1">
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <h3 className="font-semibold text-base text-red-900">{errorInfo.title}</h3>
+                    {errorInfo.statusCode && (
+                      <span className="px-2.5 py-0.5 text-xs font-mono font-bold bg-red-200/90 text-red-800 rounded-md">
+                        HTTP {errorInfo.statusCode}
+                      </span>
+                    )}
+                  </div>
+                  
+                  <div className="text-sm bg-white/90 p-3.5 rounded-xl border border-red-200/70 text-zinc-800 space-y-1">
+                    <p className="font-medium text-red-950 flex items-center gap-1.5 text-xs uppercase tracking-wider">
+                      <span className="inline-block w-2 h-2 rounded-full bg-red-500"></span>
+                      猜测的错误原因 (Suspected Reason)：
+                    </p>
+                    <p className="text-zinc-700 pl-3 leading-relaxed text-sm">{errorInfo.suspectedReason}</p>
+                  </div>
+
+                  {errorInfo.quotaHint && (
+                    <div className="text-xs bg-amber-50/90 p-3.5 rounded-xl border border-amber-200 text-amber-950 space-y-1">
+                      <p className="font-semibold text-amber-900 flex items-center gap-1.5 text-xs uppercase tracking-wider">
+                        <span>📊</span>
+                        使用量与配额检查提示 (Check Quota & Usage)：
+                      </p>
+                      <p className="pl-4 leading-relaxed text-zinc-700">{errorInfo.quotaHint}</p>
+                    </div>
+                  )}
+
+                  {errorInfo.details && errorInfo.details !== errorInfo.suspectedReason && (
+                    <details className="text-xs text-zinc-500 pt-0.5">
+                      <summary className="cursor-pointer hover:text-zinc-700 font-medium select-none">
+                        查看技术细节与原始错误信息 (Details)
+                      </summary>
+                      <pre className="mt-1.5 p-2.5 bg-zinc-100 rounded-lg overflow-x-auto text-[11px] text-zinc-700 font-mono border border-zinc-200 max-h-40 whitespace-pre-wrap">
+                        {errorInfo.details}
+                      </pre>
+                    </details>
+                  )}
+                </div>
+              </div>
+              <button 
+                onClick={clearError}
+                className="text-zinc-400 hover:text-zinc-700 text-xs px-2.5 py-1 rounded-lg hover:bg-red-100 transition-colors shrink-0"
+              >
+                ✕ 关闭
+              </button>
+            </div>
           </div>
         )}
 

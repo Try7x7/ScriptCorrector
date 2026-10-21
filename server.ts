@@ -7,6 +7,7 @@ import * as dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 import path from "path";
 import { fileURLToPath } from "url";
+import fs from "fs";
 import rateLimit from "express-rate-limit";
 
 dotenv.config();
@@ -115,7 +116,33 @@ function getGeminiClient(): GoogleGenAI {
 // Helper to wait
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Helper to construct correction prompt safely on the server side
+// Prompt template path and in-memory cache
+const PROMPT_TEMPLATE_PATH = path.join(__dirname, "config", "promptTemplate.md");
+let cachedPromptTemplate: string = "";
+
+function loadPromptTemplate(): string {
+  if (cachedPromptTemplate) {
+    return cachedPromptTemplate;
+  }
+  try {
+    if (fs.existsSync(PROMPT_TEMPLATE_PATH)) {
+      cachedPromptTemplate = fs.readFileSync(PROMPT_TEMPLATE_PATH, "utf-8");
+      console.log(`[PromptTemplate] Successfully loaded prompt template from ${PROMPT_TEMPLATE_PATH} (${cachedPromptTemplate.length} chars)`);
+      return cachedPromptTemplate;
+    } else {
+      console.warn(`[PromptTemplate] Warning: ${PROMPT_TEMPLATE_PATH} not found.`);
+    }
+  } catch (err: any) {
+    console.error(`[PromptTemplate] Error reading prompt template from ${PROMPT_TEMPLATE_PATH}:`, err?.message || err);
+  }
+
+  return "";
+}
+
+// Pre-load prompt template into memory at startup
+loadPromptTemplate();
+
+// Helper to construct correction prompt safely on the server side using the external Markdown template
 function buildCorrectionPrompt(
   transcribedText: string,
   referenceText: string,
@@ -135,32 +162,8 @@ function buildCorrectionPrompt(
   const visualOptStart = Number(options.visualOptStart) || 25;
   const visualOptEnd = Number(options.visualOptEnd) || 30;
 
-  return `你是一个专业的音频转录编辑，专门处理法语神学内容的字幕校对。
-你的任务是将语音识别生成的原始文本（文本A）修正为准确、通顺且符合神学规范的字幕文本（文本C），同时参考文案原稿（文本B）进行核对。
-
-### 核心原则：采用“双重标准”处理策略
-1. **经文与神话语部分 (Strict Mode)**：严格对齐文案（文本B）。
-2. **口语讲解部分 (Faithful Mode)**：忠实还原语音（文本A），仅修复错误。
-
-### 详细修正规则：
-
-#### 1. 经文与神话语部分 (Strict Mode)
-- **适用范围**：引用圣经经文、直接引用上帝的话（Dieu dit / Jésus dit...）、祷告词。
-- **绝对权威**：此部分的拼写、标点、措辞必须 100% 严格按照文本B执行。即使说话人读错或稍微改词，优先修正为文本B的标准写法。
-- **神性代词大写 (Capitalisation Divine)**：所有指代上帝、耶稣、圣灵的代词必须首字母大写（如：Il, Son, Lui, Ton, Moi）。
-- **标点符号**：必须使用法语引号 « ... » 包裹经文或神的话语。严格跟随文本B的逗号、句号位置。
-- **专有名词与章节**：书卷名必须准确且大写（如 Matthieu, Ésaïe）。章节格式统一为“书名 章:节”（如 Jean 3:16）。
-
-#### 2. 口语讲解/非经文部分 (Faithful Mode)
-- **适用范围**：讲员的解释、见证、引导语、结尾问候。
-- **忠实还原语音**：不要照搬文本B。如果说话人改词、加词或换了说法，必须记录说话人实际说的内容。
-- **保留口语特征**：保留连接词和语气词（如：et bah, en fait, donc, alors, du coup）和口语语法结构。
-- **修复 ASR 错误**：修复同音词错误（如 verre -> ver, encre -> ancre）、动词变位错误、以及无意义的听辨错误。
-
-#### 3. 通用格式规范
-- **数字**：将数字 1, 2, 3 改为单词 un/une, deux, trois（除非是章节号或年份）。
-- **缩写**：N° -> numéro。
-${enableLineBreaks ? `- **强制断行要求 (字幕排版关键准则，必须使用 \\n 换行符)**：
+  const lineBreakRule = enableLineBreaks
+    ? `- **强制断行要求 (字幕排版关键准则，必须使用 \\n 换行符)**：
   - **逐行输出**：请务必在 \`correctedText\` 中**使用换行符 (\\n)** 将整篇文本分割为一行一行的标准字幕，不要输出为一整段不换行的长篇文本！
   - **字符数严格限制 (以字母、标点和空格总字符数为准)**：
     - 每行最长不得超过 ${maxLineLength} 个字符（包含标点与空格）。
@@ -170,20 +173,14 @@ ${enableVisualOpt ? `    - **避开视觉盲区**：尽量避免单行字符数�
     1. 优先在句子与分句标点处（句号 .、问号 ?、感叹号 !、逗号 ,、分号 ;、冒号 :、省略号 …、法语引号 « »）自然停顿断行。
     2. 依据语法结构（主谓宾、关系从句、介词短语）合理断行，切勿在单词中间截断。
     3. 严禁单字介词/冠词在行末悬挂或孤立（如 « et », « de », « le », « la », « un », « une », « à », « pour » 必须与后接名词或从句在同一行）。
-    4. 对称平衡：长句拆分为两行时，前后两行字符数尽量均衡。` : '- **断行要求**：不需要换行，直接输出为一整段连续文本（不包含换行符）。'}
+    4. 对称平衡：长句拆分为两行时，前后两行字符数尽量均衡。`
+    : '- **断行要求**：不需要换行，直接输出为一整段连续文本（不包含换行符）。';
 
-### 输出要求：
-- 请以 JSON 格式输出，包含以下两个字段：
-  - \`correctedText\`: 最终的文本C。特别注意：如果启用了断行，行与行之间必须使用换行符 (\\n) 分隔。
-  - \`differences\`: 文本C与文本B（文案原稿）的差异分析。请列出说话人改词、加词、漏词或与文案不一致的地方（**请务必使用中文回复此字段**）。
-- 不要包含 markdown 代码块标记（如 \\\`\\\`\\\`json），直接输出 JSON 字符串。
-
----
-**文本A (原始识别结果)：**
-${transcribedText}
-
-**文本B (文案原稿)：**
-${referenceText}`;
+  const template = loadPromptTemplate();
+  return template
+    .replace('{{lineBreakRule}}', lineBreakRule)
+    .replace('{{transcribedText}}', transcribedText)
+    .replace('{{referenceText}}', referenceText);
 }
 
 async function startServer() {
@@ -387,9 +384,9 @@ async function startServer() {
       
       let errorMessage = "Transcription failed";
       let errorDetail = "An unexpected error occurred during audio transcription.";
+      const upstreamStatus = error.response?.status;
       
       if (error.response) {
-        const upstreamStatus = error.response.status;
         console.error("Gladia API error response status:", upstreamStatus);
         if (upstreamStatus === 401 || upstreamStatus === 403) {
           errorMessage = "Gladia API 认证失败，请检查 API Key 是否有效。";
@@ -415,8 +412,14 @@ async function startServer() {
       }
       
       // Security: Never leak full or masked system keys to the client
-      res.status(500).json({
+      const statusCode = upstreamStatus || 500;
+      res.status(statusCode).json({
         error: errorMessage,
+        statusCode,
+        suspectedReason: errorDetail,
+        quotaHint: upstreamStatus === 402 || upstreamStatus === 429 
+          ? "请前往 Gladia 控制台 (app.gladia.io) 检查当前账户的转录时长额度，或在左侧面板填入新的有效 API Key。" 
+          : "请检查音频文件格式或网络连接状态。",
         details: errorDetail,
       });
     }
@@ -425,23 +428,31 @@ async function startServer() {
   // API route for text correction using Gemini
   // Allowed models allowlist to prevent arbitrary model specification
   const ALLOWED_MODELS = new Set([
-    "gemini-3.6-flash",
+    "gemini-3.8-flash",
     "gemini-2.5-flash",
     "gemini-2.5-pro",
+    "gemini-flash-latest",
+    "gemini-3.6-flash",
   ]);
 
   app.post("/api/correct", correctLimiter, async (req, res) => {
+    // Explicitly set JSON content-type header for API response
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+
+    let targetModel = "gemini-3.8-flash";
+
     try {
       const { 
         transcribedText, 
         referenceText, 
         options = {}, 
         prompt: rawPrompt, 
-        model = "gemini-3.6-flash" 
+        model = "gemini-3.8-flash" 
       } = req.body;
 
-      // Model validation
-      const targetModel = ALLOWED_MODELS.has(model) ? model : "gemini-3.6-flash";
+      // Model validation - map legacy gemini-3.6-flash to gemini-3.8-flash
+      const validatedModel = ALLOWED_MODELS.has(model) ? model : "gemini-3.8-flash";
+      targetModel = validatedModel === "gemini-3.6-flash" ? "gemini-3.8-flash" : validatedModel;
 
       // Input validation and safe prompt construction
       let finalPrompt = "";
@@ -469,80 +480,78 @@ async function startServer() {
         return res.status(500).json({ error: err.message || "Gemini API key is not configured" });
       }
 
-      console.log(`--- New Correction Request using ${targetModel} ---`);
+      console.log(`--- New Correction Request using ${targetModel} (0 retries mode) ---`);
 
-      let response;
-      let lastError;
-      let retryCount = 0;
-      const maxRetries = 3;
-
-      while (retryCount < maxRetries) {
-        try {
-          response = await ai.models.generateContent({ 
-            model: targetModel,
-            contents: finalPrompt,
-            config: {
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  correctedText: { 
-                    type: Type.STRING,
-                    description: "The final corrected transcript (Text C). If line breaks were requested in the prompt, separate every single line with a newline character (\\n)."
-                  },
-                  differences: { 
-                    type: Type.STRING, 
-                    description: "Analysis of differences between Text C and Text B in Chinese"
-                  }
-                },
-                required: ["correctedText", "differences"]
+      // 0 retries mode: execute exactly 1 single attempt to conserve daily quota (RPD/RPM)
+      const response = await ai.models.generateContent({ 
+        model: targetModel,
+        contents: finalPrompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              correctedText: { 
+                type: Type.STRING, 
+                description: "The final corrected transcript (Text C). If line breaks were requested in the prompt, separate every single line with a newline character (\\n)."
+              },
+              differences: { 
+                type: Type.STRING, 
+                description: "Analysis of differences between Text C and Text B in Chinese"
               }
-            }
-          });
-          break; // Success!
-        } catch (err: any) {
-          lastError = err;
-          retryCount++;
-          const isRetryable = err.status === 503 || err.status === 500 || err.status === 429 || 
-                              err.message?.includes("503") || err.message?.includes("Service Unavailable");
-          
-          if (isRetryable && retryCount < maxRetries) {
-            const delay = Math.pow(2, retryCount) * 1000;
-            console.warn(`Gemini attempt ${retryCount} failed with ${err.status}. Retrying in ${delay}ms...`);
-            await wait(delay);
-          } else {
-            throw err;
+            },
+            required: ["correctedText", "differences"]
           }
         }
-      }
-
-      if (!response) throw lastError;
+      });
 
       const text = response.text;
-
       console.log("Correction completed successfully.");
-      res.json({ text });
+      return res.json({ text });
     } catch (error: any) {
       console.error("Gemini correction failed:", error?.message || error);
       
-      // Handle 429 or 503 specifically
-      if (error.status === 429 || (error.message && error.message.includes("429"))) {
-        return res.status(429).json({ 
-          error: "Gemini API 额度已耗尽 (Quota Exceeded)", 
-          details: "您已超过当前配额。请检查您的 Gemini API 计划和计费详情，或者稍后再试。" 
-        });
+      const rawStatus = error?.status || error?.statusCode;
+      const statusMsg = String(error?.message || "");
+
+      let statusCode = 500;
+      let errorTitle = "文本校对处理失败";
+      let suspectedReason = "模型在处理请求时发生内部异常。";
+      let quotaHint = "请前往 Google AI Studio (aistudio.google.com) 检查您的账号使用量与额度。";
+
+      if (rawStatus === 429 || statusMsg.includes("429") || statusMsg.includes("RESOURCE_EXHAUSTED")) {
+        statusCode = 429;
+        errorTitle = "Gemini API 配额超限或并发过快 (Quota / Rate Limit Exceeded)";
+        suspectedReason = "每分钟请求频率超出限制（如超出免费层 5 RPM 限制）或每日请求总额度已用尽（如超出 20 RPD 限制）。";
+        quotaHint = "请前往 Google AI Studio (aistudio.google.com) 控制台检查当前账号的 RPM (每分钟请求数) 与 RPD (每日请求数) 进度条。免费层每分钟最多支持 5 次请求，请等待 1 分钟后重试。";
+      } else if (rawStatus === 503 || statusMsg.includes("503") || statusMsg.includes("Service Unavailable") || statusMsg.includes("overloaded")) {
+        statusCode = 503;
+        errorTitle = "Gemini 模型服务暂时不可用 (Service Unavailable)";
+        suspectedReason = "Google 云端该模型服务器当前遭遇突发高峰流量、节点拥堵或正在进行临时扩容维护。当前已按要求配置为 0 次自动重试，本次报错未额外浪费您的宝贵额度。";
+        quotaHint = "请稍候 10~30 秒后重试。同时请留意 Google AI Studio 状态，并检查当前时间段的 RPM / TPM 用量。";
+      } else if (rawStatus === 403 || statusMsg.includes("403") || statusMsg.includes("PERMISSION_DENIED")) {
+        statusCode = 403;
+        errorTitle = "API 访问权限受限 (Permission Denied)";
+        suspectedReason = "当前 API 凭据无效、权限不足，或当前 IP 所在网络区域不受 Gemini 服务支持。";
+        quotaHint = "请在 Google AI Studio 控制台中检查当前工作区注入的 API Key 状态是否正常。";
+      } else if (rawStatus === 404 || statusMsg.includes("404") || statusMsg.includes("NOT_FOUND")) {
+        statusCode = 404;
+        errorTitle = "模型不存在或已停用 (Model Not Found)";
+        suspectedReason = `请求的模型 ${targetModel} 在当前服务节点不可用。`;
+        quotaHint = "系统已选用最新的 gemini-3.8-flash 模型，请检查模型支持列表。";
+      } else if (statusMsg.includes("fetch failed") || statusMsg.includes("ENOTFOUND") || statusMsg.includes("ETIMEDOUT")) {
+        statusCode = 504;
+        errorTitle = "模型服务器网络连接超时";
+        suspectedReason = "后端连接 Google AI 端点时发生网络连接超时或中断。";
+        quotaHint = "请检查容器外网访问状态或稍候重试。";
       }
 
-      if (error.status === 503 || (error.message && error.message.includes("503"))) {
-        return res.status(503).json({ 
-          error: "Gemini API 服务暂时不可用 (Service Unavailable)", 
-          details: "Google 模型目前负载过高，已自动重试但仍未成功。请稍后重试。" 
-        });
-      }
-
-      res.status(500).json({
-        error: "Text correction failed",
-        details: "校正处理失败，请稍后重试。",
+      return res.status(statusCode).json({
+        error: errorTitle,
+        statusCode,
+        suspectedReason,
+        quotaHint,
+        details: error?.message || String(error)
       });
     }
   });

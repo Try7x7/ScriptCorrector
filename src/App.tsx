@@ -417,7 +417,7 @@ export default function App() {
             <div className="flex items-center gap-2.5 flex-wrap">
               <h1 className="text-xl font-semibold tracking-tight">Script Corrector (口播稿校对工具-法语)</h1>
               <span className="px-2 py-0.5 text-xs font-semibold font-mono bg-indigo-50 text-indigo-700 border border-indigo-200/80 rounded-full">
-                v1.0.0
+                v1.1.0
               </span>
             </div>
           </div>
@@ -914,7 +914,7 @@ export default function App() {
       </main>
 
       <footer className="max-w-7xl mx-auto px-6 py-6 text-center text-xs text-zinc-400 border-t border-zinc-200 mt-12">
-        <span>Script Corrector (口播稿校对工具-法语) · 版本 v1.0.0</span>
+        <span>Script Corrector (口播稿校对工具-法语) · 版本 v1.1.0</span>
       </footer>
     </div>
   );

@@ -1,4 +1,4 @@
-# Script Corrector (口播稿校对工具-法语) `v1.0.0`
+# Script Corrector (口播稿校对工具-法语) `v1.1.0`
 
 <p align="center">
   <img src="./src/assets/images/script_corrector_icon_1791735239310.jpg" alt="Script Corrector Icon" width="128" height="128" style="border-radius: 24px;" /><br/><br/>
@@ -8,6 +8,35 @@
 </p>
 
 一个专为口播音频、演讲和神学录音打造的高精度语音转录与字幕智能校对工具。系统结合 **Gladia ASR** 语音识别与 **Google Gemini** 大语言模型，针对原始文案与实际发音进行“双重标准”智能对齐校正，并提供符合现代影视/自媒体规范的自动化字幕断行与 SRT/TXT 导出能力。
+
+---
+
+## 📝 更新日志 (Changelog)
+
+### [v1.1.0] - 2026-10-22
+- 🚀 **模型引擎全面升级至 `gemini-3.8-flash`**：
+  - 弃用已下线的旧版模型别名，默认调用 Google 官方当前最新标准文本模型 `gemini-3.8-flash`（并设 `gemini-flash-latest` 为兼容备选）；
+  - 提升了法语神学严谨校对的推理精度与语法分析稳定性。
+- ⚙️ **提示词解耦与独立配置文件 (`config/promptTemplate.md`)**：
+  - 将原嵌入在服务端代码中的数十行法语神学校对长文本规则（Strict / Faithful 双重标准、神性代词首字母大写、法语标点 « » 规范等）完整抽离至独立的 Markdown 配置文件；
+  - 采用服务启动时预读常驻内存机制，既方便随时微调提示词规则，又保证请求时零磁盘 I/O 延迟。
+- 🛡️ **严格 0 次自动重试机制（保护每日免费额度）**：
+  - 彻底移除了后端在遭遇 503 / 429 报错时的后台静默循环重试，杜绝了此前因网络瞬时波动导致“前端点 1 次消耗 3 次请求额度”的问题；
+  - 严格保持 1 动作 = 1 次 API 请求，最大程度守护 5 RPM 与 20 RPD 的宝贵免费调用配额。
+- 📊 **智能诊断级错误看板与使用量检查提示**：
+  - 页面顶部新增结构化错误卡片，直观显示 HTTP 状态码徽标（如 `HTTP 429`、`HTTP 503`）；
+  - 自动归纳展示“猜测的错误原因 (Suspected Reason)”；
+  - 醒目提供“使用量与配额检查提示 (Check Quota & Usage)”，指导用户前往 Google AI Studio 控制台查看 RPM/RPD 使用进度。
+- 🌐 **容器冷启动唤醒与网关防御式解析**：
+  - 重构了前端对后端响应的读取流程（优先提取 `response.text()` 并防御性校验），彻底根除了 `SyntaxError: Unexpected token '<', "<!doctype "...` 的 JSON 语法解析崩溃；
+  - 针对 AI Studio 开发环境容器在冷启动或重启时返回的 `Starting Server...` HTML 页面进行了精准识别，明确告知用户“容器正在唤醒中，未实际调用模型，未消耗任何配额”。
+
+### [v1.0.0] - 2026-10-11
+- 🎉 **首个正式发布版本**；
+- 集成 Gladia ASR 语音识别与 Google Gemini 智能神学校正；
+- 支持经文 100% 对齐文案（Strict Mode）与口语讲解忠实还原语音（Faithful Mode）的双重标准处理；
+- 自动化字幕断行排版与视觉避险区间算法；
+- 支持标准 `.srt` 字幕文件与时间轴 `.txt` 文本的一键导出。
 
 ---
 

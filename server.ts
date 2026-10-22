@@ -216,7 +216,7 @@ async function startServer() {
 
   // Health check route
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", version: "1.0.0", timestamp: new Date().toISOString() });
+    res.json({ status: "ok", version: "1.1.0", timestamp: new Date().toISOString() });
   });
 
   // API route to handle audio upload and transcription

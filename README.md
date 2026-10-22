@@ -4,6 +4,9 @@
   <img src="./src/assets/images/script_corrector_icon_1791735239310.jpg" alt="Script Corrector Icon" width="128" height="128" style="border-radius: 24px;" /><br/><br/>
   <a href="https://aistudio.google.com/">
     <img src="https://img.shields.io/badge/Open%20in-Google%20AI%20Studio-4285F4?style=for-the-badge&logo=google&logoColor=white" alt="Open in Google AI Studio" />
+  </a>&nbsp;&nbsp;
+  <a href="./LICENSE">
+    <img src="https://img.shields.io/badge/License-GPLv3-blue.svg?style=for-the-badge" alt="License: GPL v3" />
   </a>
 </p>
 
@@ -212,3 +215,11 @@ npm run build
 ```bash
 npm run lint
 ```
+
+---
+
+## 📄 开源许可证 (License)
+
+本项目遵循 [GNU General Public License v3.0 (GPL-3.0)](./LICENSE) 开源许可证。
+
+您可以自由地运行、研读、修改与分发本软件。若您修改本项目或基于本项目构建衍生作品并公开发布，根据 GPL v3 条款要求，该衍生作品亦须以开源形式在 GPL v3 许可证下发布并公开相应源代码。

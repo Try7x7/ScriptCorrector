@@ -1,17 +1,18 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Upload, FileAudio, FileText, CheckCircle2, Loader2, AlertCircle, Copy, RefreshCw, Eye, Hash, Download, FileDown } from 'lucide-react';
+import React, { useState } from 'react';
+import { Loader2 } from 'lucide-react';
+import { Header } from './components/Header';
+import { QuotaAlert } from './components/QuotaAlert';
+import { TranscriptionPanel } from './components/TranscriptionPanel';
+import { ScriptPanel } from './components/ScriptPanel';
+import { SubtitleSettingsPanel } from './components/SubtitleSettingsPanel';
+import { ResultsPanel } from './components/ResultsPanel';
+import { getCorrectionPrompt } from './config/prompts';
+import { DEFAULT_GEMINI_MODEL, SUBTITLE_DEFAULTS } from './config/constants';
+import { SupportedLanguage, ReportLanguage, ApiErrorInfo } from './types';
 import { formatSubtitles, downloadSrtFile, downloadTxtFile } from './utils/subtitleFormatter';
-import appIcon from './assets/images/script_corrector_icon_1791735239310.jpg';
-
-interface AppErrorInfo {
-  title: string;
-  statusCode?: number | string;
-  suspectedReason: string;
-  quotaHint?: string;
-  details?: string;
-}
 
 export default function App() {
+  const [selectedLanguage, setSelectedLanguage] = useState<SupportedLanguage>('es');
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioDuration, setAudioDuration] = useState<number | null>(null);
   const [textB, setTextB] = useState('');
@@ -23,168 +24,62 @@ export default function App() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isCorrecting, setIsCorrecting] = useState(false);
   const [isWakingUp, setIsWakingUp] = useState(false);
-  const [errorInfo, setErrorInfo] = useState<AppErrorInfo | null>(null);
-
-  const clearError = () => setErrorInfo(null);
-  const setSimpleError = (msg: string) => setErrorInfo({ title: msg, suspectedReason: msg });
+  const [error, setError] = useState<string | null>(null);
+  const [errorInfo, setErrorInfo] = useState<ApiErrorInfo | null>(null);
   
   // Output Settings
-  const [enableLineBreaks, setEnableLineBreaks] = useState(true);
-  const [maxLineLength, setMaxLineLength] = useState(32);
-  const [minLineLength, setMinLineLength] = useState(12);
-  const [enableVisualOptimization, setEnableVisualOptimization] = useState(true);
-  const [visualOptStart, setVisualOptStart] = useState(25);
-  const [visualOptEnd, setVisualOptEnd] = useState(30);
-  const [showLineStats, setShowLineStats] = useState(true);
+  const [enableLineBreaks, setEnableLineBreaks] = useState(SUBTITLE_DEFAULTS.enableLineBreaks);
+  const [maxLineLength, setMaxLineLength] = useState(SUBTITLE_DEFAULTS.maxLineLength);
+  const [minLineLength, setMinLineLength] = useState(SUBTITLE_DEFAULTS.minLineLength);
+  const [enableVisualOptimization, setEnableVisualOptimization] = useState(SUBTITLE_DEFAULTS.enableVisualOptimization);
+  const [visualOptStart, setVisualOptStart] = useState(SUBTITLE_DEFAULTS.visualOptStart);
+  const [visualOptEnd, setVisualOptEnd] = useState(SUBTITLE_DEFAULTS.visualOptEnd);
   
-  const [isCopiedA, setIsCopiedA] = useState(false);
-  const [isCopiedB, setIsCopiedB] = useState(false);
-  const [isCopiedC, setIsCopiedC] = useState(false);
-  const [isExportedSrt, setIsExportedSrt] = useState(false);
-  const [isExportedTxt, setIsExportedTxt] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
+  const [diffLanguage, setDiffLanguage] = useState<ReportLanguage>('es');
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const extractAudioDuration = (file: File) => {
-    try {
-      const url = URL.createObjectURL(file);
+  const handleAudioSelect = (file: File | null) => {
+    setAudioFile(file);
+    if (file) {
       const audio = new Audio();
-      audio.src = url;
+      audio.src = URL.createObjectURL(file);
       audio.onloadedmetadata = () => {
-        if (audio.duration && !isNaN(audio.duration) && isFinite(audio.duration)) {
-          setAudioDuration(audio.duration);
-        }
-        URL.revokeObjectURL(url);
+        setAudioDuration(audio.duration);
+        URL.revokeObjectURL(audio.src);
       };
-      audio.onerror = () => {
-        URL.revokeObjectURL(url);
-      };
-    } catch (err) {
-      console.log('Could not extract audio duration', err);
+    } else {
+      setAudioDuration(null);
     }
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
-      if (file.type.startsWith('audio/')) {
-        setAudioFile(file);
-        extractAudioDuration(file);
-        clearError();
-      } else {
-        setSimpleError('请上传音频文件 (Please upload an audio file)');
-      }
-    }
-  };
-
-  // Auto-wake mechanism
-  useEffect(() => {
-    const checkHealth = async () => {
-      try {
-        await fetch('/api/health');
-      } catch (e) {
-        console.log('Server might be sleeping, ping failed');
-      }
-    };
-
-    // Check on mount
-    checkHealth();
-
-    // Check when tab becomes visible
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        checkHealth();
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, []);
-
-  const handleCopyText = async (text: string, setCopied: (val: boolean) => void) => {
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy text: ', err);
-    }
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setAudioFile(file);
-      extractAudioDuration(file);
-      clearError();
-    }
-  };
-
-  const handleExportSrt = () => {
-    if (!textC.trim()) return;
-    const baseName = audioFile
-      ? audioFile.name.replace(/[/\\?%*:|"<>]/g, '_').replace(/\.[^/.]+$/, '').slice(0, 80)
-      : 'corrected_subtitles';
-    const srtFileName = `${baseName}.srt`;
-    downloadSrtFile(textC, srtFileName, audioDuration || undefined);
-    setIsExportedSrt(true);
-    setTimeout(() => setIsExportedSrt(false), 2200);
-  };
-
-  const handleExportTxt = () => {
-    if (!textC.trim()) return;
-    const baseName = audioFile
-      ? audioFile.name.replace(/[/\\?%*:|"<>]/g, '_').replace(/\.[^/.]+$/, '').slice(0, 80)
-      : 'corrected_subtitles';
-    const txtFileName = `${baseName}.txt`;
-    downloadTxtFile(textC, txtFileName, audioDuration || undefined);
-    setIsExportedTxt(true);
-    setTimeout(() => setIsExportedTxt(false), 2200);
   };
 
   const handleProcess = async () => {
     if (!audioFile) {
-      setSimpleError('请上传音频文件 (Please upload an audio file)');
+      setError('请上传音频文件 (Please upload an audio file)');
       return;
     }
     if (!textB.trim()) {
-      setSimpleError('请输入文字稿 (Please enter the reference text)');
+      setError('请输入文字稿 (Please enter the reference text)');
       return;
     }
 
-    if (gladiaApiKeyInput.trim() && !/^[a-zA-Z0-9_\-]{16,128}$/.test(gladiaApiKeyInput.trim())) {
-      setSimpleError('自定义 Gladia API Key 格式无效，请检查是否包含空格或特殊字符。');
-      return;
-    }
-
-    clearError();
+    setError(null);
+    setErrorInfo(null);
     setTextA('');
     setTextC('');
     setDiffText('');
 
-    // Step 0: Wake up server if needed
+    // Step 0: Wake up server if needed and verify it returns JSON status: ok
     setIsWakingUp(true);
-    try {
-      const healthCheck = await fetch('/api/health');
-      if (!healthCheck.ok) throw new Error('Server not responding');
-    } catch (e) {
-      console.log('Server wake-up retry...');
-      // Retry once after 1s
-      await new Promise(r => setTimeout(r, 1000));
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const healthCheck = await fetch('/api/health');
+        const text = await healthCheck.text();
+        if (healthCheck.ok && text.includes('"ok"')) {
+          break;
+        }
+      } catch (e) {
+        console.log(`Server wake-up check attempt ${attempt + 1}...`);
+      }
+      await new Promise(r => setTimeout(r, 1200));
     }
     setIsWakingUp(false);
 
@@ -197,61 +92,61 @@ export default function App() {
         formData.append('gladiaApiKey', gladiaApiKeyInput.trim());
       }
       formData.append('audio', audioFile);
+      formData.append('language', selectedLanguage);
 
       const response = await fetch('/api/transcribe', {
         method: 'POST',
         headers: {
           'X-Gladia-API-Key': gladiaApiKeyInput.trim(),
+          'X-Target-Language': selectedLanguage,
         },
         body: formData,
       });
 
-      const rawText = await response.text();
+      const rawResponseText = await response.text();
+      const rawLower = rawResponseText.trim().toLowerCase();
+      const isHtmlResponse = rawLower.startsWith('<!doctype') || 
+                             rawLower.startsWith('<html') ||
+                             rawLower.includes('starting server') ||
+                             rawLower.includes('please wait while your application starts');
+
+      if (isHtmlResponse) {
+        const isStartingServer = rawLower.includes('starting server') || 
+                                 rawLower.includes('please wait while your application starts') ||
+                                 response.status === 200;
+        
+        const startingServerTip = '服务容器正在唤醒中 (Starting Server)：本次未消耗任何额度，容器就绪通常只需 2~3 秒，请稍后直接重试。';
+        const generalHtmlTip = `服务器连接异常 (收到网关 HTML 页面，HTTP ${response.status})。服务可能正在冷启动，本次未消耗任何额度，请稍等几秒重试。`;
+        const msg = isStartingServer ? startingServerTip : generalHtmlTip;
+
+        setErrorInfo({
+          message: msg,
+          errorCode: isStartingServer ? 'CONTAINER_STARTING (HTTP 200)' : `GATEWAY_HTML (HTTP ${response.status})`,
+          errorReason: isStartingServer 
+            ? '服务容器正在冷启动或重启过渡期（收到网关 Starting Server 页面）。请求未触达转录后台，本次调用未消耗任何外部额度。'
+            : '网关或代理返回了过渡 HTML 页面，请求尚未到达后台。',
+          quotaTip: '💡 本次操作完全未扣减任何额度（消耗为 0）。容器就绪通常只需 2~3 秒，请稍后直接重新提交。'
+        });
+        setError(msg);
+        throw new Error(msg);
+      }
+
       let responseData: any = null;
       try {
-        responseData = JSON.parse(rawText);
-      } catch {
-        if (rawText.includes("Starting Server") || rawText.includes("Please wait while your application starts")) {
-          setErrorInfo({
-            title: "服务容器正在唤醒中 (Server Starting)",
-            statusCode: "Starting (200)",
-            suspectedReason: "当前开发环境后端刚刚完成重启或唤醒，网关正在建立连接。本次请求未发送至模型端点，未消耗任何额度。",
-            quotaHint: "容器完全就绪通常只需 2~3 秒。请稍候 3 秒后直接重新点击「开始智能校对」。",
-            details: "Gateway returned Starting Server HTML page with status 200."
-          });
-          setIsTranscribing(false);
-          return;
-        }
-        if (rawText.trim().startsWith('<!doctype') || rawText.trim().startsWith('<html')) {
-          setErrorInfo({
-            title: "服务网关返回非预期页面",
-            statusCode: response.status,
-            suspectedReason: "请求被上游云端代理网关拦截（返回了 HTML 页面而不是 JSON 数据）。此情况通常发生在网络节点短暂抖动或服务重启瞬间，未实际调用语音识别模型，未消耗配额。",
-            quotaHint: "请等待 3 秒后刷新页面或重新尝试。",
-            details: rawText.substring(0, 200)
-          });
-          setIsTranscribing(false);
-          return;
-        }
-        throw new Error(`服务器返回非标准格式 (${response.status}): ${rawText.substring(0, 100)}`);
+        responseData = JSON.parse(rawResponseText);
+      } catch (parseErr) {
+        throw new Error(`服务器返回了非 JSON 格式响应 (HTTP ${response.status}): ${rawResponseText.substring(0, 150)}`);
       }
 
       if (!response.ok) {
-        const errorTitle = responseData?.error || '语音识别请求失败';
-        const code = responseData?.statusCode || response.status;
-        const reason = responseData?.suspectedReason || responseData?.details || '语音识别服务发生异常。';
-        const quotaHint = responseData?.quotaHint || '请前往 Gladia 控制台检查可用时长额度。';
-        const details = typeof responseData?.details === 'object' ? JSON.stringify(responseData?.details) : (responseData?.details || rawText);
-
-        setErrorInfo({
-          title: errorTitle,
-          statusCode: code,
-          suspectedReason: reason,
-          quotaHint,
-          details
-        });
-        setIsTranscribing(false);
-        return;
+        let errorMsg = responseData.error || 'Transcription failed';
+        if (responseData.details) {
+          errorMsg += ` (${typeof responseData.details === 'object' ? JSON.stringify(responseData.details) : responseData.details})`;
+        }
+        if (responseData.customKeyUsed) {
+          errorMsg += ' [使用自定义 API Key]';
+        }
+        throw new Error(errorMsg);
       }
 
       transcribedText = responseData.text || '';
@@ -262,93 +157,106 @@ export default function App() {
       await runGemini(transcribedText);
     } catch (err: any) {
       console.error(err);
-      setErrorInfo(prev => prev || {
-        title: '语音识别请求失败',
-        statusCode: 'Client/Network Error',
-        suspectedReason: err.message || '网络连接或客户端解析异常。',
-        quotaHint: '建议检查网络连接或刷新页面后重试。',
-        details: String(err?.stack || err)
-      });
+      setError(`语音识别失败: ${err.message}`);
       setIsTranscribing(false);
     }
   };
 
   const runGemini = async (transcribedText: string) => {
     setIsCorrecting(true);
-    clearError();
+    setError(null);
     try {
+      const prompt = getCorrectionPrompt(selectedLanguage, transcribedText, textB, diffLanguage, {
+        enableLineBreaks,
+        maxLineLength,
+        minLineLength,
+        enableVisualOptimization,
+        visualOptStart,
+        visualOptEnd,
+      });
+
       const response = await fetch('/api/correct', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          transcribedText,
-          referenceText: textB,
-          options: {
-            enableLineBreaks,
-            maxLineLength,
-            minLineLength,
-            enableVisualOptimization,
-            visualOptStart,
-            visualOptEnd
-          },
-          model: 'gemini-3.8-flash',
+          prompt,
+          model: DEFAULT_GEMINI_MODEL,
         }),
       });
 
-      const rawText = await response.text();
-      let responseData: any = null;
+      const rawResponseText = await response.text();
+      const rawLower = rawResponseText.trim().toLowerCase();
+      const isHtmlResponse = rawLower.startsWith('<!doctype') || 
+                             rawLower.startsWith('<html') ||
+                             rawLower.includes('starting server') ||
+                             rawLower.includes('please wait while your application starts');
+
+      if (isHtmlResponse) {
+        const isStartingServer = rawLower.includes('starting server') || 
+                                 rawLower.includes('please wait while your application starts') ||
+                                 response.status === 200;
+
+        const startingServerTip = '服务容器正在唤醒中 (Starting Server)：本次未消耗任何额度，容器就绪通常只需 2~3 秒，请稍后直接重试。';
+        const generalHtmlTip = `服务器响应异常 (收到网关 HTML 页面，HTTP ${response.status})。服务可能正在冷启动，本次未消耗任何额度，请稍等几秒重试。`;
+        const msg = isStartingServer ? startingServerTip : generalHtmlTip;
+
+        const startingErrInfo: ApiErrorInfo = {
+          message: msg,
+          errorCode: isStartingServer ? 'CONTAINER_STARTING (HTTP 200)' : `GATEWAY_HTML (HTTP ${response.status})`,
+          errorReason: isStartingServer 
+            ? '服务容器正在冷启动或重启过渡期（收到网关 Starting Server 页面）。请求未触达 Gemini 核心服务，本次调用消耗的配额为 0！'
+            : '网关或代理返回了过渡 HTML 页面，请求尚未到达模型后台。',
+          quotaTip: '💡 本次操作完全未扣减任何 Gemini API 额度（消耗为 0）。容器就绪通常只需 2~3 秒，请稍后直接点击下方「手动重试校对」继续。',
+          model: DEFAULT_GEMINI_MODEL
+        };
+        setErrorInfo(startingErrInfo);
+        setError(msg);
+        throw new Error(msg);
+      }
+
+      let responseJson: any = null;
       try {
-        responseData = JSON.parse(rawText);
-      } catch {
-        if (rawText.includes("Starting Server") || rawText.includes("Please wait while your application starts")) {
-          setErrorInfo({
-            title: "服务容器正在唤醒中 (Server Starting)",
-            statusCode: "Starting (200)",
-            suspectedReason: "当前开发环境后端刚刚完成重启或唤醒，网关正在建立连接。本次请求未发送至模型端点，未消耗任何额度。",
-            quotaHint: "容器完全就绪通常只需 2~3 秒。请稍候 3 秒后直接重新点击「开始智能校对」。",
-            details: "Gateway returned Starting Server HTML page with status 200."
-          });
-          setIsCorrecting(false);
-          return;
-        }
-        if (rawText.trim().startsWith('<!doctype') || rawText.trim().startsWith('<html')) {
-          setErrorInfo({
-            title: "服务网关返回非预期页面",
-            statusCode: response.status,
-            suspectedReason: "请求被上游云端代理网关拦截（返回了 HTML 页面而不是 JSON 数据）。此情况通常发生在网络节点短暂抖动或服务重启瞬间，未实际调用 Gemini 模型，未消耗配额。",
-            quotaHint: "请等待 3 秒后刷新页面或重新尝试。",
-            details: rawText.substring(0, 200)
-          });
-          setIsCorrecting(false);
-          return;
-        }
-        throw new Error(`服务返回非标准格式 (${response.status}): ${rawText.substring(0, 100)}`);
+        responseJson = JSON.parse(rawResponseText);
+      } catch (parseErr) {
+        throw new Error(`服务器返回了非 JSON 格式响应 (HTTP ${response.status}): ${rawResponseText.substring(0, 120)}`);
       }
 
       if (!response.ok) {
-        const errorTitle = responseData?.error || '文本校对失败';
-        const code = responseData?.statusCode || response.status;
-        const reason = responseData?.suspectedReason || responseData?.details || '模型在处理校对请求时发生异常。';
-        const quotaHint = responseData?.quotaHint || '请前往 Google AI Studio (aistudio.google.com) 控制台检查当前账号的 RPM (每分钟请求数) 与 RPD (每日配额) 使用量。';
-        const details = typeof responseData?.details === 'object' ? JSON.stringify(responseData?.details) : (responseData?.details || rawText);
-
-        setErrorInfo({
-          title: errorTitle,
-          statusCode: code,
-          suspectedReason: reason,
-          quotaHint,
-          details
-        });
-        setIsCorrecting(false);
-        return;
+        const errInfo: ApiErrorInfo = {
+          message: responseJson.error || `校正失败 (HTTP ${response.status})`,
+          errorCode: responseJson.errorCode || `HTTP ${response.status}`,
+          errorReason: responseJson.errorReason || "服务返回异常，可能受配额限制或网络拥塞影响。",
+          quotaTip: responseJson.quotaTip || "免费层配额上限通常为 5 RPM / 20 RPD。系统已将后台重试设置为 0 次以节约用量。请前往 Google AI Studio 检查用量。",
+          details: typeof responseJson.details === 'object' ? JSON.stringify(responseJson.details) : responseJson.details
+        };
+        setErrorInfo(errInfo);
+        setError(errInfo.message);
+        throw new Error(errInfo.message);
       }
 
-      const responseText = responseData?.text || '{}';
+      const responseText = responseJson.text || '{}';
       
+      // Robust JSON parser for Gemini output: strips markdown code fences and extracts JSON object
       try {
-        const result = JSON.parse(responseText);
+        let cleanText = responseText.trim();
+        if (cleanText.startsWith('```')) {
+          cleanText = cleanText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+        }
+        
+        let result: any = null;
+        try {
+          result = JSON.parse(cleanText);
+        } catch (firstErr) {
+          const match = cleanText.match(/\{[\s\S]*\}/);
+          if (match) {
+            result = JSON.parse(match[0]);
+          } else {
+            throw firstErr;
+          }
+        }
+
         let corrected = result.correctedText || '';
         if (enableLineBreaks && corrected) {
           corrected = formatSubtitles(corrected, {
@@ -374,548 +282,206 @@ export default function App() {
           });
         }
         setTextC(corrected);
-        setDiffText("解析差异失败，请查看原始输出。");
+        setDiffText("差异报告解析失败，已直接呈现校正文本。请检查内容格式。");
       }
     } catch (err: any) {
       console.error(err);
       setErrorInfo(prev => prev || {
-        title: '文本校对异常',
-        statusCode: 'Client/Network Error',
-        suspectedReason: err.message || '网络连接或客户端处理发生异常。',
-        quotaHint: '请前往 Google AI Studio 检查当前账号配额进度条，或刷新页面后重试。',
-        details: String(err?.stack || err)
+        message: err.message || "请求失败",
+        errorCode: 'REQUEST_FAILED',
+        errorReason: err.message?.includes('HTML') 
+          ? '云服务代理返回了 HTML 页面（可能由于冷启动或请求超时）。'
+          : '网络通信中断或服务未响应。',
+        quotaTip: '后台重试已设为 0 次以保护您的配额。请前往 Google AI Studio 查看当前使用量状态。'
       });
+      setError(`文本校正失败: ${err.message}`);
     }
     setIsCorrecting(false);
   };
 
   const handleProcessGeminiOnly = async () => {
     if (!textB.trim()) {
-      setSimpleError('请输入文字稿 (Please enter the reference text)');
+      setError('请输入文字稿 (Please enter the reference text)');
       return;
     }
 
-    clearError();
+    setError(null);
+    setErrorInfo(null);
     setTextC('');
     setDiffText('');
+
+    // Step 0: Wake up server if needed and verify it returns JSON status: ok
+    setIsWakingUp(true);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const healthCheck = await fetch('/api/health');
+        const text = await healthCheck.text();
+        if (healthCheck.ok && text.includes('"ok"')) {
+          break;
+        }
+      } catch (e) {
+        console.log(`Server wake-up check attempt ${attempt + 1}...`);
+      }
+      await new Promise(r => setTimeout(r, 1200));
+    }
+    setIsWakingUp(false);
 
     // If we have transcribed text, use it. Otherwise, use textB as the source text.
     const textToProcess = textA.trim() ? textA : textB;
     await runGemini(textToProcess);
   };
 
+  const handleReformatLines = () => {
+    if (textC) {
+      const formatted = formatSubtitles(textC, {
+        maxLen: maxLineLength,
+        minLen: minLineLength,
+        enableVisualOpt: enableVisualOptimization,
+        visualOptStart,
+        visualOptEnd
+      });
+      setTextC(formatted);
+    }
+  };
+
+  const handleExportSrt = () => {
+    if (!textC.trim()) return;
+    const baseName = audioFile ? audioFile.name.replace(/\.[^/.]+$/, '') : 'subtitles';
+    downloadSrtFile(textC, `${baseName}_${selectedLanguage}.srt`, audioDuration || undefined);
+  };
+
+  const handleExportTxt = () => {
+    if (!textC.trim()) return;
+    const baseName = audioFile ? audioFile.name.replace(/\.[^/.]+$/, '') : 'subtitles';
+    downloadTxtFile(textC, `${baseName}_${selectedLanguage}.txt`, audioDuration || undefined);
+  };
+
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 font-sans">
-      <header className="bg-white border-b border-zinc-200 px-6 py-4 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <img 
-              src={appIcon} 
-              alt="Script Corrector Icon" 
-              className="w-9 h-9 rounded-xl shadow-xs object-cover border border-zinc-200"
-            />
-            <div className="flex items-center gap-2.5 flex-wrap">
-              <h1 className="text-xl font-semibold tracking-tight">Script Corrector (口播稿校对工具-法语)</h1>
-              <span className="px-2 py-0.5 text-xs font-semibold font-mono bg-indigo-50 text-indigo-700 border border-indigo-200/80 rounded-full">
-                v1.1.0
-              </span>
-            </div>
-          </div>
-        </div>
-      </header>
+      <Header selectedLanguage={selectedLanguage} />
 
       <main className="max-w-7xl mx-auto px-6 py-8">
-        {errorInfo && (
-          <div className="mb-6 p-5 bg-red-50/90 border border-red-200 rounded-2xl shadow-xs text-red-900 transition-all">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3 flex-1">
-                <div className="p-2.5 bg-red-100 rounded-xl text-red-600 shrink-0 mt-0.5">
-                  <AlertCircle size={22} />
-                </div>
-                <div className="space-y-3 flex-1">
-                  <div className="flex items-center gap-2.5 flex-wrap">
-                    <h3 className="font-semibold text-base text-red-900">{errorInfo.title}</h3>
-                    {errorInfo.statusCode && (
-                      <span className="px-2.5 py-0.5 text-xs font-mono font-bold bg-red-200/90 text-red-800 rounded-md">
-                        HTTP {errorInfo.statusCode}
-                      </span>
-                    )}
-                  </div>
-                  
-                  <div className="text-sm bg-white/90 p-3.5 rounded-xl border border-red-200/70 text-zinc-800 space-y-1">
-                    <p className="font-medium text-red-950 flex items-center gap-1.5 text-xs uppercase tracking-wider">
-                      <span className="inline-block w-2 h-2 rounded-full bg-red-500"></span>
-                      猜测的错误原因 (Suspected Reason)：
-                    </p>
-                    <p className="text-zinc-700 pl-3 leading-relaxed text-sm">{errorInfo.suspectedReason}</p>
-                  </div>
-
-                  {errorInfo.quotaHint && (
-                    <div className="text-xs bg-amber-50/90 p-3.5 rounded-xl border border-amber-200 text-amber-950 space-y-1">
-                      <p className="font-semibold text-amber-900 flex items-center gap-1.5 text-xs uppercase tracking-wider">
-                        <span>📊</span>
-                        使用量与配额检查提示 (Check Quota & Usage)：
-                      </p>
-                      <p className="pl-4 leading-relaxed text-zinc-700">{errorInfo.quotaHint}</p>
-                    </div>
-                  )}
-
-                  {errorInfo.details && errorInfo.details !== errorInfo.suspectedReason && (
-                    <details className="text-xs text-zinc-500 pt-0.5">
-                      <summary className="cursor-pointer hover:text-zinc-700 font-medium select-none">
-                        查看技术细节与原始错误信息 (Details)
-                      </summary>
-                      <pre className="mt-1.5 p-2.5 bg-zinc-100 rounded-lg overflow-x-auto text-[11px] text-zinc-700 font-mono border border-zinc-200 max-h-40 whitespace-pre-wrap">
-                        {errorInfo.details}
-                      </pre>
-                    </details>
-                  )}
-                </div>
+        {/* Language Notification Banner */}
+        {selectedLanguage === 'es' && (
+          <div className="mb-6 p-4 bg-amber-50/80 border border-amber-200 rounded-2xl flex items-start sm:items-center justify-between gap-3 text-amber-900 shadow-xs">
+            <div className="flex items-center gap-2.5">
+              <span className="text-xl">🇪🇸</span>
+              <div className="text-xs sm:text-sm">
+                <span className="font-semibold">已启用全流程西班牙语核对模式：</span>
+                <span className="text-amber-800">
+                  自动启用西语语音识别、神圣人称大写（Él, Su, Ti, Mí）、标点规范（¿? ¡! « »）、西语语法断行规则，<strong>核对差异分析报告默认全篇使用西班牙语输出</strong>。
+                </span>
               </div>
-              <button 
-                onClick={clearError}
-                className="text-zinc-400 hover:text-zinc-700 text-xs px-2.5 py-1 rounded-lg hover:bg-red-100 transition-colors shrink-0"
-              >
-                ✕ 关闭
-              </button>
             </div>
+            <span className="hidden sm:inline-block text-[11px] bg-amber-200/70 text-amber-900 px-2.5 py-1 rounded-full font-medium">
+              Español
+            </span>
           </div>
         )}
 
+        {/* Quota and Error Alert Card */}
+        <QuotaAlert
+          error={error}
+          errorInfo={errorInfo}
+          onClose={() => { setError(null); setErrorInfo(null); }}
+          onRetry={() => {
+            const textToProcess = textA.trim() ? textA : textB;
+            runGemini(textToProcess);
+          }}
+          isRetrying={isCorrecting}
+          canRetry={Boolean(textA || textB)}
+        />
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Left Column: Inputs */}
+          {/* Left Column: Inputs & Controls */}
           <div className="space-y-6">
-            <section className="bg-white p-6 rounded-2xl shadow-sm border border-zinc-200">
-              <h2 className="text-lg font-medium mb-4 flex items-center gap-2">
-                <FileAudio size={20} className="text-indigo-600" />
-                1. 语音识别设置 (Transcription Settings)
-              </h2>
-              
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-zinc-700 mb-2">
-                  Gladia API Key (可选 - 如果后台未配置或额度耗尽)
-                </label>
-                <input
-                  type="text"
-                  value={gladiaApiKeyInput}
-                  onChange={(e) => setGladiaApiKeyInput(e.target.value)}
-                  placeholder="在此粘贴新的 Gladia API Key..."
-                  className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm font-mono ${
-                    gladiaApiKeyInput.trim() ? 'border-green-500 bg-green-50' : 'border-zinc-300'
-                  }`}
-                />
-                {gladiaApiKeyInput.trim() && (
-                  <p className="text-[10px] text-green-600 mt-1 font-medium italic">
-                    ✓ 已启用自定义 API Key
-                  </p>
-                )}
-                <p className="text-[10px] text-zinc-400 mt-1">
-                  如果你在识别时遇到 402 错误，请尝试填入新获取的 Key。
-                </p>
-              </div>
+            <TranscriptionPanel
+              selectedLanguage={selectedLanguage}
+              onLanguageChange={setSelectedLanguage}
+              gladiaApiKeyInput={gladiaApiKeyInput}
+              onGladiaApiKeyChange={setGladiaApiKeyInput}
+              audioFile={audioFile}
+              onFileSelect={handleAudioSelect}
+            />
 
-              <div 
-                className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer ${
-                  isDragging
-                    ? 'border-indigo-500 bg-indigo-50 scale-[1.02]'
-                    : audioFile 
-                      ? 'border-emerald-500 bg-emerald-50' 
-                      : 'border-zinc-300 hover:bg-zinc-50'
-                }`}
-                onClick={() => fileInputRef.current?.click()}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-              >
-                <input 
-                  type="file" 
-                  ref={fileInputRef} 
-                  onChange={handleFileChange} 
-                  accept="audio/*" 
-                  className="hidden" 
-                />
-                {audioFile ? (
-                  <div className="flex flex-col items-center">
-                    <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center mb-3">
-                      <FileAudio className="h-6 w-6 text-emerald-600" />
-                    </div>
-                    <p className="text-sm font-semibold text-emerald-800 truncate max-w-full px-4">
-                      {audioFile.name}
-                    </p>
-                    <p className="text-xs text-emerald-600 mt-1">
-                      {(audioFile.size / 1024 / 1024).toFixed(2)} MB • 已就绪
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    <Upload className="mx-auto h-10 w-10 text-zinc-400 mb-3" />
-                    <p className="text-sm font-medium text-zinc-700">点击上传音频文件</p>
-                    <p className="text-xs text-zinc-500 mt-1">支持 MP3, WAV, M4A 等格式</p>
-                  </>
-                )}
-              </div>
-            </section>
+            <ScriptPanel
+              textB={textB}
+              onTextBChange={setTextB}
+              selectedLanguage={selectedLanguage}
+            />
 
-            <section className="bg-white p-6 rounded-2xl shadow-sm border border-zinc-200">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-medium flex items-center gap-2">
-                  <FileText size={20} className="text-indigo-600" />
-                  2. 输入文字稿 (Reference Script - Text B)
-                </h2>
-                <button
-                  onClick={() => handleCopyText(textB, setIsCopiedB)}
-                  disabled={!textB.trim()}
-                  className="flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {isCopiedB ? <CheckCircle2 size={16} className="text-emerald-500" /> : <Copy size={16} />}
-                  {isCopiedB ? '已复制' : '复制'}
-                </button>
-              </div>
-              <textarea
-                value={textB}
-                onChange={(e) => setTextB(e.target.value)}
-                placeholder="在此粘贴原始文字稿..."
-                className="w-full h-64 p-4 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-none text-sm leading-relaxed"
-              />
-            </section>
-
-            <section className="bg-white p-6 rounded-2xl shadow-sm border border-zinc-200">
-              <h2 className="text-lg font-medium mb-4 flex items-center gap-2">
-                <CheckCircle2 size={20} className="text-indigo-600" />
-                3. 输出设置 (Output Settings)
-              </h2>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <label htmlFor="enableLineBreaks" className="text-sm font-medium text-zinc-700">启用字幕规范断行 (Subtitle Line Breaks)</label>
-                    <p className="text-xs text-zinc-400">按照自然语法与字符数上限进行优雅断行</p>
-                  </div>
-                  <input
-                    id="enableLineBreaks"
-                    type="checkbox"
-                    checked={enableLineBreaks}
-                    onChange={(e) => setEnableLineBreaks(e.target.checked)}
-                    className="w-4 h-4 text-indigo-600 border-zinc-300 rounded focus:ring-indigo-500"
-                  />
-                </div>
-                
-                {enableLineBreaks && (
-                  <>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label htmlFor="maxLength" className="block text-sm font-medium text-zinc-700 mb-1">
-                          每行最长字符数 (Max Chars)
-                        </label>
-                        <input
-                          id="maxLength"
-                          type="number"
-                          value={maxLineLength}
-                          onChange={(e) => setMaxLineLength(Math.max(10, Number(e.target.value)))}
-                          className="w-full px-3 py-2 border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
-                          min="10"
-                        />
-                        <p className="text-[11px] text-zinc-400 mt-0.5">包含字母、标点与空格 (推荐 28-36)</p>
-                      </div>
-                      <div>
-                        <label htmlFor="minLength" className="block text-sm font-medium text-zinc-700 mb-1">
-                          每行最小字符数 (Min Chars)
-                        </label>
-                        <input
-                          id="minLength"
-                          type="number"
-                          value={minLineLength}
-                          onChange={(e) => setMinLineLength(Math.max(4, Number(e.target.value)))}
-                          className="w-full px-3 py-2 border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
-                          min="4"
-                        />
-                        <p className="text-[11px] text-zinc-400 mt-0.5">防止单个单词独立成行 (推荐 10-15)</p>
-                      </div>
-                    </div>
-
-                    <div className="pt-2 border-t border-zinc-100">
-                      <div className="flex items-center justify-between mb-3">
-                        <div>
-                          <label htmlFor="enableVisualOpt" className="text-sm font-medium text-zinc-700">视觉排版避险 (Visual Optimization)</label>
-                          <p className="text-xs text-zinc-400">避开容易引起视觉不适的不协调断行区间</p>
-                        </div>
-                        <input
-                          id="enableVisualOpt"
-                          type="checkbox"
-                          checked={enableVisualOptimization}
-                          onChange={(e) => setEnableVisualOptimization(e.target.checked)}
-                          className="w-4 h-4 text-indigo-600 border-zinc-300 rounded focus:ring-indigo-500"
-                        />
-                      </div>
-                      
-                      {enableVisualOptimization && (
-                        <div className="flex items-center gap-2 text-sm text-zinc-600 bg-zinc-50 p-3 rounded-lg border border-zinc-200">
-                          <span>避开区间:</span>
-                          <input
-                            type="number"
-                            value={visualOptStart}
-                            onChange={(e) => setVisualOptStart(Number(e.target.value))}
-                            className="w-16 px-2 py-1 border border-zinc-300 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500 text-center text-sm"
-                          />
-                          <span>到</span>
-                          <input
-                            type="number"
-                            value={visualOptEnd}
-                            onChange={(e) => setVisualOptEnd(Number(e.target.value))}
-                            className="w-16 px-2 py-1 border border-zinc-300 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500 text-center text-sm"
-                          />
-                          <span>字符</span>
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-            </section>
+            <SubtitleSettingsPanel
+              enableLineBreaks={enableLineBreaks}
+              onEnableLineBreaksChange={setEnableLineBreaks}
+              maxLineLength={maxLineLength}
+              onMaxLineLengthChange={setMaxLineLength}
+              minLineLength={minLineLength}
+              onMinLineLengthChange={setMinLineLength}
+              enableVisualOptimization={enableVisualOptimization}
+              onEnableVisualOptimizationChange={setEnableVisualOptimization}
+              visualOptStart={visualOptStart}
+              onVisualOptStartChange={setVisualOptStart}
+              visualOptEnd={visualOptEnd}
+              onVisualOptEndChange={setVisualOptEnd}
+            />
 
             <div className="flex flex-col sm:flex-row gap-4">
               <button
                 onClick={handleProcess}
                 disabled={isTranscribing || isCorrecting || isWakingUp || !audioFile || !textB.trim()}
-                className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl font-medium shadow-sm transition-all flex items-center justify-center gap-2"
+                className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl font-medium shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
               >
                 {(isTranscribing || isWakingUp || (isCorrecting && !textC && !diffText && audioFile)) ? (
                   <>
                     <Loader2 className="animate-spin" size={20} />
-                    {isWakingUp ? '正在连接服务器...' : 
-                     isTranscribing ? '正在识别音频...' : '正在校正文本...'}
+                    <span>
+                      {isWakingUp ? '正在连接服务器...' : 
+                       isTranscribing ? '正在识别音频...' : '正在校正文本...'}
+                    </span>
                   </>
                 ) : (
-                  '完整处理 (Audio + Gemini)'
+                  <span>完整处理 (Audio + Gemini)</span>
                 )}
               </button>
               
               <button
                 onClick={handleProcessGeminiOnly}
                 disabled={isTranscribing || isCorrecting || !textB.trim()}
-                className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white rounded-xl font-medium shadow-sm transition-all flex items-center justify-center gap-2"
+                className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white rounded-xl font-medium shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
               >
                 {isCorrecting ? (
                   <>
                     <Loader2 className="animate-spin" size={20} />
-                    正在校正文本...
+                    <span>正在校正文本...</span>
                   </>
                 ) : (
-                  '仅运行 Gemini (Text Only)'
+                  <span>仅运行 Gemini (Text Only)</span>
                 )}
               </button>
             </div>
           </div>
 
-          {/* Right Column: Results */}
-          <div className="space-y-6">
-            <section className="bg-white p-6 rounded-2xl shadow-sm border border-zinc-200 flex flex-col min-h-[200px]">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-medium flex items-center gap-2">
-                  <FileText size={20} className="text-zinc-500" />
-                  识别结果 (Transcription - Text A)
-                </h2>
-                <button
-                  onClick={() => handleCopyText(textA, setIsCopiedA)}
-                  disabled={!textA.trim()}
-                  className="flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {isCopiedA ? <CheckCircle2 size={16} className="text-emerald-500" /> : <Copy size={16} />}
-                  {isCopiedA ? '已复制' : '复制'}
-                </button>
-              </div>
-              <div className="flex-1 bg-zinc-50 border border-zinc-200 rounded-xl p-4 overflow-y-auto max-h-[300px]">
-                {isTranscribing ? (
-                  <div className="h-full flex flex-col items-center justify-center text-zinc-400 py-8">
-                    <Loader2 className="animate-spin mb-2" size={24} />
-                    <p className="text-sm">正在调用 Gladia API...</p>
-                  </div>
-                ) : textA ? (
-                  <p className="text-sm leading-relaxed text-zinc-700 whitespace-pre-wrap">{textA}</p>
-                ) : (
-                  <div className="h-full flex items-center justify-center text-zinc-400 text-sm py-8">
-                    暂无识别结果
-                  </div>
-                )}
-              </div>
-            </section>
-
-            <section className="bg-white p-6 rounded-2xl shadow-sm border border-zinc-200 flex flex-col min-h-[340px]">
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 size={20} className="text-emerald-500" />
-                  <h2 className="text-lg font-medium">最终校正文本 (Corrected - Text C)</h2>
-                  {textC && (
-                    <span className="text-xs px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full font-medium">
-                      共 {textC.split('\n').filter(l => l.trim()).length} 行
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {textC && (
-                    <button
-                      id="toggle-stats-btn"
-                      onClick={() => setShowLineStats(!showLineStats)}
-                      className={`flex items-center gap-1 px-2.5 py-1.5 border rounded-lg text-xs font-medium transition-colors ${
-                        showLineStats 
-                          ? 'bg-indigo-50 border-indigo-200 text-indigo-700' 
-                          : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'
-                      }`}
-                      title="切换逐行字符统计与合规分析"
-                    >
-                      <Hash size={13} />
-                      {showLineStats ? '隐藏行统计' : '显示行统计'}
-                    </button>
-                  )}
-                  <button
-                    id="reformat-lines-btn"
-                    onClick={() => {
-                      if (textC) {
-                        const formatted = formatSubtitles(textC, {
-                          maxLen: maxLineLength,
-                          minLen: minLineLength,
-                          enableVisualOpt: enableVisualOptimization,
-                          visualOptStart,
-                          visualOptEnd
-                        });
-                        setTextC(formatted);
-                      }
-                    }}
-                    disabled={!textC.trim()}
-                    title="按当前设定的字符上限与语法规则重新精准排版断行"
-                    className="flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    <RefreshCw size={14} />
-                    重新断行
-                  </button>
-                  <button
-                    id="export-srt-btn"
-                    onClick={handleExportSrt}
-                    disabled={!textC.trim()}
-                    title="根据当前分行与时间戳导出为 .srt 字幕文件并下载"
-                    className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm font-medium transition-all ${
-                      isExportedSrt
-                        ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
-                        : 'bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700'
-                    } disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:border-zinc-200 disabled:text-zinc-400`}
-                  >
-                    {isExportedSrt ? <CheckCircle2 size={15} /> : <Download size={15} />}
-                    {isExportedSrt ? '已下载 SRT' : '导出为 SRT'}
-                  </button>
-                  <button
-                    id="export-txt-btn"
-                    onClick={handleExportTxt}
-                    disabled={!textC.trim()}
-                    title="根据当前分行与序号/时间戳导出为 .txt 格式文本并下载"
-                    className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm font-medium transition-all ${
-                      isExportedTxt
-                        ? 'bg-sky-600 border-sky-600 text-white shadow-sm'
-                        : 'bg-sky-50 hover:bg-sky-100 border-sky-200 text-sky-700'
-                    } disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:border-zinc-200 disabled:text-zinc-400`}
-                  >
-                    {isExportedTxt ? <CheckCircle2 size={15} /> : <FileText size={15} />}
-                    {isExportedTxt ? '已下载 TXT' : '导出为 TXT'}
-                  </button>
-                  <button
-                    id="copy-textc-btn"
-                    onClick={() => handleCopyText(textC, setIsCopiedC)}
-                    disabled={!textC.trim()}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 border border-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    {isCopiedC ? <CheckCircle2 size={16} /> : <Copy size={16} />}
-                    {isCopiedC ? '已复制' : '复制'}
-                  </button>
-                </div>
-              </div>
-              <div className="flex-1 bg-emerald-50/50 border border-emerald-100 rounded-xl p-4 overflow-y-auto max-h-[460px]">
-                {isCorrecting ? (
-                  <div className="h-full flex flex-col items-center justify-center text-emerald-600/60 py-8">
-                    <Loader2 className="animate-spin mb-2" size={24} />
-                    <p className="text-sm">正在使用 Gemini 进行校正与排版...</p>
-                  </div>
-                ) : textC ? (
-                  showLineStats ? (
-                    <div className="space-y-1.5 font-mono text-xs">
-                      {textC.split('\n').map((line, idx) => {
-                        const trimmed = line.trim();
-                        const len = trimmed.length;
-                        const isOverMax = len > maxLineLength;
-                        const isUnderMin = len > 0 && len < minLineLength;
-                        const isVisualOptAlert = enableVisualOptimization && len >= visualOptStart && len <= visualOptEnd;
-
-                        return (
-                          <div 
-                            key={idx} 
-                            className={`flex items-start gap-2 p-1.5 rounded transition-colors ${
-                              isOverMax 
-                                ? 'bg-red-100/70 text-red-900' 
-                                : isVisualOptAlert
-                                  ? 'bg-amber-100/60 text-amber-900'
-                                  : 'hover:bg-emerald-100/60 text-zinc-800'
-                            }`}
-                          >
-                            <span className="shrink-0 w-8 text-right text-zinc-400 font-sans select-none text-[11px]">
-                              {idx + 1}
-                            </span>
-                            <span className="flex-1 font-sans text-sm leading-snug break-words">
-                              {trimmed || <span className="text-zinc-300 italic">(空行)</span>}
-                            </span>
-                            <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded font-sans font-medium select-none ${
-                              isOverMax 
-                                ? 'bg-red-200 text-red-800 font-bold' 
-                                : isUnderMin 
-                                  ? 'bg-orange-100 text-orange-700'
-                                  : isVisualOptAlert
-                                    ? 'bg-amber-200 text-amber-800'
-                                    : 'bg-emerald-200/80 text-emerald-800'
-                            }`}>
-                              {len} 字符
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="text-sm leading-relaxed text-zinc-800 whitespace-pre-wrap font-medium">
-                      {textC}
-                    </div>
-                  )
-                ) : (
-                  <div className="h-full flex items-center justify-center text-zinc-400 text-sm py-8">
-                    暂无校正结果
-                  </div>
-                )}
-              </div>
-            </section>
-
-            <section className="bg-white p-6 rounded-2xl shadow-sm border border-zinc-200 flex flex-col min-h-[200px]">
-              <h2 className="text-lg font-medium mb-4 flex items-center gap-2">
-                <FileText size={20} className="text-amber-500" />
-                差异分析 (Differences: Text C vs Text B)
-              </h2>
-              <div className="flex-1 bg-amber-50/50 border border-amber-100 rounded-xl p-4 overflow-y-auto max-h-[300px]">
-                {isCorrecting ? (
-                  <div className="h-full flex flex-col items-center justify-center text-amber-600/60 py-8">
-                    <Loader2 className="animate-spin mb-2" size={24} />
-                    <p className="text-sm">正在分析差异...</p>
-                  </div>
-                ) : diffText ? (
-                  <div className="text-sm leading-relaxed text-zinc-800 whitespace-pre-wrap">
-                    {diffText}
-                  </div>
-                ) : (
-                  <div className="h-full flex items-center justify-center text-zinc-400 text-sm py-8">
-                    暂无差异分析
-                  </div>
-                )}
-              </div>
-            </section>
-          </div>
+          {/* Right Column: Output Results */}
+          <ResultsPanel
+            selectedLanguage={selectedLanguage}
+            textA={textA}
+            textC={textC}
+            diffText={diffText}
+            isTranscribing={isTranscribing}
+            isCorrecting={isCorrecting}
+            maxLineLength={maxLineLength}
+            minLineLength={minLineLength}
+            enableVisualOptimization={enableVisualOptimization}
+            visualOptStart={visualOptStart}
+            visualOptEnd={visualOptEnd}
+            onReformatLines={handleReformatLines}
+            onExportSrt={handleExportSrt}
+            onExportTxt={handleExportTxt}
+            diffLanguage={diffLanguage}
+            onDiffLanguageChange={setDiffLanguage}
+          />
         </div>
       </main>
-
-      <footer className="max-w-7xl mx-auto px-6 py-6 text-center text-xs text-zinc-400 border-t border-zinc-200 mt-12">
-        <span>Script Corrector (口播稿校对工具-法语) · 版本 v1.1.0</span>
-      </footer>
     </div>
   );
 }

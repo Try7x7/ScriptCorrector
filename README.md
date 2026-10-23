@@ -1,38 +1,56 @@
-# Script Corrector (口播稿校对工具-法语) `v1.1.0`
+# Script Corrector (口播稿校对与字幕工具) `v1.2.0`
 
 <p align="center">
-  <img src="./src/assets/images/script_corrector_icon_1791735239310.jpg" alt="Script Corrector Icon" width="128" height="128" style="border-radius: 24px;" /><br/><br/>
+  <img src="./public/script_corrector_icon.jpg" alt="Script Corrector Icon" width="136" height="136" style="border-radius: 28px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);" /><br/><br/>
   <a href="https://aistudio.google.com/">
     <img src="https://img.shields.io/badge/Open%20in-Google%20AI%20Studio-4285F4?style=for-the-badge&logo=google&logoColor=white" alt="Open in Google AI Studio" />
-  </a>&nbsp;&nbsp;
-  <a href="./LICENSE">
-    <img src="https://img.shields.io/badge/License-GPLv3-blue.svg?style=for-the-badge" alt="License: GPL v3" />
+  </a>
+  <a href="#-开源许可证-license">
+    <img src="https://img.shields.io/badge/License-GPL%20v3-blue.svg?style=for-the-badge" alt="GPL v3 License" />
+  </a>
+  <a href="#-自动化测试矩阵-test-suite">
+    <img src="https://img.shields.io/badge/Tests-40%2F40%20Passing-emerald?style=for-the-badge" alt="Tests 40/40 Passing" />
+  </a>
+  <a href="https://deepmind.google/technologies/gemini/">
+    <img src="https://img.shields.io/badge/Model-Gemini%203.8%20Flash-orange?style=for-the-badge&logo=google" alt="Gemini 3.8 Flash" />
   </a>
 </p>
 
-一个专为口播音频、演讲和神学录音打造的高精度语音转录与字幕智能校对工具。系统结合 **Gladia ASR** 语音识别与 **Google Gemini** 大语言模型，针对原始文案与实际发音进行“双重标准”智能对齐校正，并提供符合现代影视/自媒体规范的自动化字幕断行与 SRT/TXT 导出能力。
+一个专为口播音频、演讲录音与神学宣讲打造的高精度语音转录与字幕智能审校系统。系统深度整合 **Gladia ASR 语音识别** 与 **Google Gemini 3.8 Flash 大语言模型**，针对原始文字稿与说话人实际发音采用独创的**“双重标准 (Dual Standard)”**智能对齐校正，并提供符合现代影视与自媒体短视频排版标准的自动化语法断行、逐行统计与 `.srt` / `.txt` 字幕导出能力。
 
 ---
 
 ## 📝 更新日志 (Changelog)
 
+### [v1.2.0] - 2026-10-22
+- 🌐 **多语言全流程支持升级**：
+  - 全面支持**西班牙语 (Español 默认)**、**法语 (Français)** 与 **英语 (English)** 的全流程智能校对与语音识别；
+  - 西班牙语模式自动启用神圣人称代词首字母大写（Él, Su, Ti, Mí）、标点规范（¿? ¡! « »）以及西语语法断行规则；
+  - 核对差异报告支持一键在**西班牙语全篇输出**与**中文输出**之间平滑切换。
+- 🧱 **系统架构模块化大重构**：
+  - **提示词配置文件解耦**：将原嵌入在前端组件中的长达 130 行提示词核心规则完整剥离至独立的配置文件 `src/config/prompts.ts` 与全局常量配置 `src/config/constants.ts`；
+  - **组件化拆分**：原 1250 余行的单体 `App.tsx` 拆分为 `Header`、`QuotaAlert`、`TranscriptionPanel`、`ScriptPanel`、`SubtitleSettingsPanel`、`ResultsPanel` 等 6 大高内聚、低耦合子组件，主页面代码精简为清晰的流程编排器。
+- 🛡️ **单次文本 10 万字符防御边界**：
+  - 服务端新增严格的单次 Payload 上限防御，对于超过 100,000 字符（10 万字符）的请求直接予以拦截并返回 `HTTP 400 / PAYLOAD_TOO_LARGE`，保障服务资源与内存安全。
+- 🧪 **全链路 40 项自动化测试覆盖（9 大测试套件，100% 满额通过）**：
+  - 构建了基于 **Vitest + jsdom + @testing-library/react** 的全链路测试体系；
+  - 覆盖配额保护（503/429/0 次重试）、网关防御（HTML 200 Starting Server 唤醒识别）、服务端校验（10 万字符边界/限流）、Gladia 语音转录模拟、前端组件点击交互，以及端到端全流程模拟串联测试。
+- 📜 **引入 GNU General Public License v3.0 (GPL v3)** 开源许可证。
+
 ### [v1.1.0] - 2026-10-22
 - 🚀 **模型引擎全面升级至 `gemini-3.8-flash`**：
-  - 弃用已下线的旧版模型别名，默认调用 Google 官方当前最新标准文本模型 `gemini-3.8-flash`（并设 `gemini-flash-latest` 为兼容备选）；
-  - 提升了法语神学严谨校对的推理精度与语法分析稳定性。
-- ⚙️ **提示词解耦与独立配置文件 (`config/promptTemplate.md`)**：
-  - 将原嵌入在服务端代码中的数十行法语神学校对长文本规则（Strict / Faithful 双重标准、神性代词首字母大写、法语标点 « » 规范等）完整抽离至独立的 Markdown 配置文件；
-  - 采用服务启动时预读常驻内存机制，既方便随时微调提示词规则，又保证请求时零磁盘 I/O 延迟。
+  - 默认调用 Google 官方当前最新标准文本模型 `gemini-3.8-flash`；
+  - 显著提升了多语言神学严谨校对的推理精度与语法分析稳定性。
 - 🛡️ **严格 0 次自动重试机制（保护每日免费额度）**：
-  - 彻底移除了后端在遭遇 503 / 429 报错时的后台静默循环重试，杜绝了此前因网络瞬时波动导致“前端点 1 次消耗 3 次请求额度”的问题；
+  - 彻底移除了后端在遭遇 503 / 429 报错时的后台静默循环重试，杜绝了此前因网络瞬时波动导致“前端点击 1 次在后台消耗 3 次请求额度”的问题；
   - 严格保持 1 动作 = 1 次 API 请求，最大程度守护 5 RPM 与 20 RPD 的宝贵免费调用配额。
 - 📊 **智能诊断级错误看板与使用量检查提示**：
-  - 页面顶部新增结构化错误卡片，直观显示 HTTP 状态码徽标（如 `HTTP 429`、`HTTP 503`）；
-  - 自动归纳展示“猜测的错误原因 (Suspected Reason)”；
-  - 醒目提供“使用量与配额检查提示 (Check Quota & Usage)”，指导用户前往 Google AI Studio 控制台查看 RPM/RPD 使用进度。
+  - 页面顶部新增结构化错误卡片，直观显示 HTTP 状态码徽章（如 `HTTP 429`、`HTTP 503`、`CONTAINER_STARTING`）；
+  - 自动归纳展示“🤔 猜测的错误原因 (Suspected Reason)”；
+  - 醒目提供“💡 配额保护与用量检查提示 (Check Quota & Usage)”，一键直达 Google AI Studio 控制台查看 RPM/RPD 使用进度。
 - 🌐 **容器冷启动唤醒与网关防御式解析**：
-  - 重构了前端对后端响应的读取流程（优先提取 `response.text()` 并防御性校验），彻底根除了 `SyntaxError: Unexpected token '<', "<!doctype "...` 的 JSON 语法解析崩溃；
-  - 针对 AI Studio 开发环境容器在冷启动或重启时返回的 `Starting Server...` HTML 页面进行了精准识别，明确告知用户“容器正在唤醒中，未实际调用模型，未消耗任何配额”。
+  - 重构前端对后端响应的读取流程（优先提取 `response.text()` 并防御性校验），彻底根除了 `SyntaxError: Unexpected token '<', "<!doctype "...` 的 JSON 语法解析崩溃；
+  - 针对 AI Studio 容器在冷启动或重启时返回的 `Starting Server...` HTML 页面进行了精准识别，明确告知用户“容器正在唤醒中，未实际调用模型，消耗配额为 0”。
 
 ### [v1.0.0] - 2026-10-11
 - 🎉 **首个正式发布版本**；
@@ -43,183 +61,157 @@
 
 ---
 
-## 🚀 一键部署与在线访问 (One-Click Deploy & Access)
+## 🌟 核心特性与功能亮点
 
-### GitHub 仓库一键导入到全新 AI Studio 项目
-如果您希望将本项目复制或一键导入到自己的 Google AI Studio 账号中运行：
+### 1. 独创的“双重标准”神学文本智能审校
+在口播演讲与神学录音中，机械化的比对往往无法兼顾“神圣经文的庄严权威”与“口播讲员的自然发挥”。Script Corrector 采用双重标准策略：
+- **经文与神话语部分 (Strict Mode)**：
+  - 引用圣经经文、神的话语、祷告词部分，拼写、标点、措辞 **100% 严格遵照文案原稿（文本 B）**；
+  - 强制遵循神圣代词首字母大写（Mayúscula Reverencial / Capitalisation Divine），如西语：*Él, Su, Suyo, Ti, Tú, Mí, Señor, Padre*；
+  - 标点符号使用标准拉丁书名号 `« ... »` 与西语倒问号/倒感叹号 `¿? ¡!`。
+- **口语讲解与非经文部分 (Faithful Mode)**：
+  - 讲员的解释、见证与过渡语，**忠实还原说话人实际录音（文本 A）**；
+  - 保留口语连接词与语气词（如西语：*bueno, pues, o sea, entonces*；法语：*et bah, en fait, du coup*）；
+  - 自动修复语音识别（ASR）造成的同音词混淆（如 *ha / a / ah*, *hecho / echo*, *tubo / tuvo*）与重音符错漏（Tildes）。
 
-1. **直接导入**：
-   - 打开 [Google AI Studio 控制台 (aistudio.google.com)](https://aistudio.google.com/)；
-   - 点击左侧菜单栏的 **Build** -> **Import from GitHub**；
-   - 粘贴本项目的 GitHub 仓库链接，点击导入确认。
-2. **零配置自动初始化**：
-   - 平台将自动识别项目配置 (`metadata.json` 与 `package.json`)；
-   - 自动拉取依赖、挂载服务端 Gemini API 凭证通道；
-   - 弹出 `Enter your environment variable to continue: GLADIA_API_KEY` 提示，填入您的 Gladia Key 即可在 1 分钟内完成全量部署与启动！
+### 2. 多语言全方位支持
+- 🇪🇸 **西班牙语 (Español)**：神圣代词大写、西语标点、语法断行，差异报告全篇西语/中文自由切换。
+- 🇫🇷 **法语 (Français)**：法语标点规范、神性代词大写、专有名词与章节格式对齐。
+- 🇬🇧 **英语 (English)**：双重标准校对、标点与语法自动修正。
 
----
+### 3. 影视级智能字幕断行与排版避险
+- **字符数严格限制**：支持自定义单行最长字符数（默认 25，推荐 25~36）与最短字符数（默认 12，防止单字成行）；
+- **语法停顿断行**：优先在标点（句号、逗号、分号、书名号）与自然语义分句处换行，严禁词内截断；
+- **防悬挂介词/冠词**：自动消除行末孤悬的单字介词与短连词（如西语 *« y », « a », « en », « de », « el », « la »*）；
+- **视觉排版避险 (Visual Optimization)**：自动避开容易导致视觉疲劳的不协调断行区间。
 
-## ⚠️ 重要说明：Gemini API 与部署环境
-
-> **核心提示**：本项目针对 **Google AI Studio** 托管环境进行了深度定制与集成（具备 `MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API` 能力）。
-
-### 1. 部署在 Google AI Studio 环境
-- **免去自行配置/管理外部 Gemini API 服务的开销**：当项目在 Google AI Studio 内部部署与运行时，平台服务会在容器运行时自动通过内部机制注入与托管 Gemini API 凭证，无需在客户端暴露密钥，也无需自行搭建复杂的第三方 LLM API 转发代理或单独维护外部账单。
-- 平台自动管理运行时生命周期，实现服务端安全的开箱即用。
-
-### 2. 部署在非 Google AI Studio 外部环境（如自建 VPS、Docker、Vercel 等）
-- 外部环境**无法**享受 Google AI Studio 平台的内置 Gemini 凭据托管服务。
-- 您**必须**在服务器环境变量或 `.env` 文件中显式配置您自行申请的 `GEMINI_API_KEY`，否则后端在调用 `/api/correct` 进行文本校正时将抛出 `500` 错误并提示未配置有效密钥。
-
----
-
-## 📖 使用操作说明 (Step-by-Step Guide)
-
-### 步骤 1：配置 Gladia API 密钥 (平台初始弹窗)
-
-当您在 Google AI Studio 中首次启动或重新加载应用时，界面通常会提示输入所需的环境变量：
-
-> 💬 **平台弹窗提示**：
-> ```text
-> Enter your environment variable to continue
-> GLADIA_API_KEY
-> ```
-
-1. **获取密钥**：前往 [Gladia 官方控制台 (app.gladia.io)](https://app.gladia.io/) 注册并复制您的 API Key。
-2. **填入并保存**：在 AI Studio 弹出的环境变量输入框中粘贴该 Key，确认保存即可完成后端环境配置。
-3. *(备用方案)*：如果您在弹窗阶段跳过了配置，亦可在页面左侧面板的 **“Gladia API Key (可选)”** 输入框中直接粘贴临时 Key，系统将自动优先采用前端填写的自定义 Key。
+### 4. 丰富多格式字幕导出
+- **标准 SRT 字幕 (`.srt`)**：根据音频总播放时长与各行字数比重自适应计算毫秒级时间戳，可无缝导入 **剪映 (CapCut)、Adobe Premiere Pro、Final Cut Pro、DaVinci Resolve** 等剪辑软件；
+- **时间轴纯文本 (`.txt`)**：带有清晰行号索引与时间范围的格式化审校记录。
 
 ---
 
-### 步骤 2：上传口播音频文件 (Text A 来源)
+## 🛡️ 配额保护与系统安全架构
 
-1. 点击或拖拽您的法语口播录音文件至 **“上传音频文件”** 区域。
-2. 支持格式：`.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, `.webm`, `.flac`（单文件限制 50MB）。
-3. 上传后，浏览器会自动解析该音频的**精确总播放时长**，用于后续自适应分配生成 SRT 字幕时间轴。
-
----
-
-### 步骤 3：输入文案原稿 (Text B)
-
-1. 在左侧面板的 **“文案原稿 (文本 B)”** 文本框中粘贴标准文字稿。
-2. 建议文稿包含标准的法语圣经经文引用（如法语引号 « ... »、神性代词大写 Il / Lui 等），以便后续智能校对引擎严格执行神学标准。
+| 防护维度 | 实现方案与机制 | 带来的保障 |
+| :--- | :--- | :--- |
+| **0 次后台静默重试** | 遭遇 503 / 429 报错时立即返回客户端，后台重试次数设为 **0** | 杜绝网络瞬时抖动造成数倍消耗，保护 5 RPM / 20 RPD 免费额度 |
+| **单次 10 万字符防御** | 服务端对提交的 Prompt 执行字符数硬校验（$\le 100,000$） | 拦截异常超大请求，彻底阻断内存溢出或 DoS 攻击 |
+| **网关 200 HTML 防御** | 客户端在 JSON 解析前执行 HTML 探针检测与不区分大小写的标签检查 | 优雅识别容器冷启动 `Starting Server` 页面，0 配额消耗明确提示 |
+| **双重存活探针** | 点击处理前先行通过 `/api/health` 轮询校验服务是否已输出真实 JSON | 避开平台容器重启的 2~3 秒窗口，防止请求直接撞上网关过渡页 |
+| **模型安全白名单** | 服务端配置白名单集合，仅允许经过认证的 Google 官方模型别名透传 | 防止非法/恶意模型参数传递至后台 |
+| **IP 速率限制器** | 内置内存级 IP 频率监控（Rate Limiter） | 防止短时间恶意高频突发调用打满网关 |
 
 ---
 
-### 步骤 4：调整字幕排版参数 (可选定制)
+## 🧪 自动化测试矩阵 (Test Suite)
 
-展开 **“字幕排版设置”** 面板，可按您的视频规范自定义：
-- **启用字幕排版优化与强制断行**：开启后校正文本将严格按行切分输出；
-- **单行最大字符数**：默认 32（推荐 28 ~ 36 字符，适配横竖屏视频阅读）；
-- **单行最小字符数**：默认 12（避免单个词独立成行）；
-- **避开视觉盲区区间**：默认开启（避免单行字数落在 25~30 之间产生视觉不协调）；
-- **显示每行字符统计**：实时在文本行左侧标出行长数字。
+项目配备了高密度的自动化回归测试矩阵，可通过 `npm test` 离线运行，耗时仅约 **4 秒**，且**不产生任何真实网络请求或配额消耗**：
 
----
+```text
+✓ test/components_interaction.test.tsx (4 tests)  # 前端组件交互、语言切换与按钮点击测试
+✓ test/subtitle_formatter.test.ts      (7 tests)  # 西语法语断行、时间戳精度与文件名安全测试
+✓ test/quota_protection.test.ts        (4 tests)  # 503/429错误诊断、0次重试与配额保护测试
+✓ test/response_shield.test.ts         (4 tests)  # 网关 HTML 200/504 页面防御与流安全测试
+✓ test/server_api.test.ts              (5 tests)  # 10万字符上限拦截、模型白名单与速率限制测试
+✓ test/e2e_pipeline.test.ts            (2 tests)  # 端到端全流程模拟串联测试（Audio -> SRT）
+✓ test/gladia_transcribe.test.ts       (5 tests)  # Gladia 402额度耗尽、自定义Key与语言映射测试
+✓ test/prompts.test.ts                 (4 tests)  # 西语法语神学提示词配置文件测试
+✓ test/diff_parser.test.ts             (5 tests)  # 大模型 JSON 鲁棒性与差异提取容错测试
 
-### 步骤 5：一键开始智能校对
-
-点击底部的 **“开始智能校对 (Start Processing)”** 按钮，系统将自动执行全流程处理：
-
-1. **阶段一 · 语音识别 (ASR)**：音频自动上传至 Gladia 进行快速转录，结果显示在中间的 **“原始识别结果 (文本 A)”**；
-2. **阶段二 · 双重标准智能校正 (Gemini 3.6 Flash)**：服务端将文本 A 与文本 B 送入 Gemini 智能引擎，经文严格遵从文本 B，口语讲解忠实还原语音，修正同音词错漏并完成自动断行，输出最终的 **“校正结果 (文本 C)”**；
-3. **差异报告**：右下角面板自动生成中文的改词、漏词、加词对比解析。
-
-> 💡 *效率提示*：若仅调整了文本稿或断行参数，无需重新上传音频，直接点击 **“仅重新校对文本 (Gemini Only)”** 即可秒级重新生成校对结果。
-
----
-
-### 步骤 6：核对与导出字幕文件
-
-校对完成后，在右侧面板支持以下导出方式：
-- **复制文本 C**：一键将规整的字幕文本复制到剪贴板；
-- **导出 SRT 字幕文件 (`.srt`)**：基于音频真实时长与各行字数比重自适应生成标准 SRT 时间轴，可无缝导入**剪映 (CapCut)、Adobe Premiere Pro、Final Cut Pro、DaVinci Resolve** 等主流剪辑软件；
-- **导出时间戳文本 (`.txt`)**：生成带序号与时间区间的排版文本记录。
-
----
-
-## 🌟 核心特性
-
-1. **精准语音转录 (ASR)**：
-   - 基于 Gladia Speech-to-Text 引擎，支持 MP3, WAV, M4A, AAC, OGG 等常见音频格式。
-   - 支持后端预设系统级 Gladia API Key，亦支持用户在前端临时填入个人自定义 Key。
-
-2. **“双重标准”神学文本智能校正 (Gemini 3.6 Flash)**：
-   - **经文与神话语 (Strict Mode)**：严格 100% 对齐原始文案（文本 B），包括标点（法语引号 « ... »）、神性代词大写（Il, Son, Lui 等）与圣经章节规范。
-   - **口语讲解/非经文部分 (Faithful Mode)**：忠实还原语音（文本 A）真实口语表达，保留说话人真实连接词，仅修正同音词、变位错漏等 ASR 错误。
-   - 自动生成中文差异对比报告（改词、加词、漏词分析）。
-
-3. **字幕规范自动排版与排版避险**：
-   - 可配置每行最大字符数（推荐 28~36 字符）与最小字符数。
-   - 智能语法停顿断行，避免悬挂介词/冠词。
-   - 视觉排版避险算法，避开易造成视觉不协调的行长区间。
-
-4. **多格式字幕导出**：
-   - **SRT 字幕文件**：根据音频真实时长或自然阅读语速自动生成精确时间戳。
-   - **TXT 文本文件**：带有序号与时间区间排版的纯文本记录。
-
----
-
-## 🛡️ 安全架构设计
-
-本项目已完成全面的应用安全工程加固：
-- **Prompt 闭环管理与解耦配置**：提示词构建逻辑完全收拢于服务端受信环境，前端仅传输结构化文本参数。核心校对规则与神学规范提取至 `config/promptTemplate.md` 单独维护，并在启动时常驻内存高效插值，提示词迭代无需修改 TypeScript 业务代码。
-- **音频文件白名单**：Multer 严格限制上传文件为合法音频 MIME 类型与扩展名，限制单文件最大 50MB。
-- **内存 DoS 防护**：全局 JSON 与 URL-encoded 限制为 2MB，防止恶意大包打满 Node.js V8 堆内存。
-- **智能速率限制 (Rate Limiting)**：
-  - `/api/transcribe` 限制单 IP 每分钟 12 次请求。
-  - `/api/correct` 限制单 IP 每分钟 20 次请求。
-- **网络反向代理与传输安全**：
-  - 启用 `trust proxy`，精确识别多层网关下的客户端真实 IP。
-  - 上游轮询接口严格执行 HTTPS 协议与域名双重校验。
-- **依赖供应链 0 漏洞**：全量锁文件经过深度 CVE/GHSA 修复与验证（`npm audit: 0 vulnerabilities`）。
-
----
-
-## 🛠️ 环境变量说明
-
-复制 `.env.example` 为 `.env`：
-
-```bash
-# Gemini API Key（在 Google AI Studio 中会自动注入；在外部自建部署时必须提供）
-GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
-
-# Gladia API Key（用于语音转录）
-GLADIA_API_KEY="YOUR_GLADIA_API_KEY"
-
-# 应用运行公网地址（由平台自动注入）
-APP_URL="YOUR_APP_URL"
+Test Files  9 passed (9)
+Tests       40 passed (40)
+Duration    ~4.3s (100% 满额通过)
 ```
 
 ---
 
-## 🚀 本地开发与构建
+## 📖 使用操作指南 (Step-by-Step Guide)
 
-### 安装依赖
+```
+┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
+│ 1. 语音设置     │       │ 2. 输入文案     │       │ 3. 字幕参数     │
+│ 上传音频/选择语种 ├──────►│ 粘贴原稿(文本B)  ├──────►│ 设置行长/避险   │
+└─────────────────┘       └─────────────────┘       └────────┬────────┘
+                                                             │
+                                                             ▼
+┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
+│ 6. 导出字幕     │       │ 5. 双重智能校对 │       │ 4. 一键处理     │
+│ 下载 SRT / TXT   │◄──────┤ 查看文本C与差异  │◄──────┤ 开始处理 / 仅校对│
+└─────────────────┘       └─────────────────┘       └─────────────────┘
+```
+
+1. **选择核对语言**：在页面左侧点击选择 **🇪🇸 西班牙语**、**🇫🇷 法语** 或 **🇬🇧 英语**。
+2. **上传口播音频**：点击或将录音文件（MP3, WAV, M4A, OGG 等）拖拽至上传区域，系统自动读取音频时长。
+3. **输入文案原稿 (文本 B)**：在左侧文本框粘贴原始文稿（神圣经文建议带完整标点）。
+4. **配置排版参数**：按需设置单行最长字符数（默认 25）、最短字符数（默认 12）或直接点击“✓ 标准规范”与“宽松排版”预设。
+5. **开始处理**：
+   - 点击 **“完整处理 (Audio + Gemini)”**：系统先调用 Gladia 完成音频转录（得到文本 A），紧接着调用 Gemini 3.8 Flash 输出精准校正（得到文本 C）与差异分析；
+   - 点击 **“仅运行 Gemini (Text Only)”**：无需音频，直接对原稿或既有转录文本执行大模型校对。
+6. **导出字幕文件**：在校对结果栏点击 **“导出为 SRT”** 或 **“导出为 TXT”**，即刻下载可直接导入主流剪辑软件的字幕文件。
+
+---
+
+## 🛠️ 项目结构与模块划分
+
+```text
+├── LICENSE                     # GNU General Public License v3.0 (GPL-3.0)
+├── README.md                   # 项目工程说明文档
+├── package.json                # 项目依赖与脚本 (Version 1.2.0)
+├── server.ts                   # Express 全功能后端服务 (Gemini API 代理与限流)
+├── index.html                  # HTML 入口
+├── src/
+│   ├── main.tsx                # React 19 应用启动入口
+│   ├── App.tsx                 # 核心流程编排器组件
+│   ├── config/
+│   │   ├── prompts.ts          # 提示词系统独立配置文件 (西语/法语/英语)
+│   │   └── constants.ts        # 全局常量、模型与排版默认值
+│   ├── types/
+│   │   └── index.ts            # 全局 TypeScript 接口与类型定义
+│   ├── components/
+│   │   ├── Header.tsx          # 顶部导航与品牌标识组件
+│   │   ├── QuotaAlert.tsx      # 错误诊断与用量检查看板组件
+│   │   ├── TranscriptionPanel.tsx # 语音识别设置与音频上传面板
+│   │   ├── ScriptPanel.tsx     # 文案原稿编辑与字数统计面板
+│   │   ├── SubtitleSettingsPanel.tsx # 字幕断行排版与预设参数面板
+│   │   └── ResultsPanel.tsx    # 识别结果、校正文本与差异报告面板
+│   └── utils/
+│       └── subtitleFormatter.ts# 核心语法断行、SRT/TXT 生成与时间戳计算引擎
+└── test/                       # 9 大全自动化测试套件 (40 项用例)
+```
+
+---
+
+## 💻 本地运行与开发
+
+### 1. 克隆并安装依赖
 ```bash
+git clone https://github.com/Try7x7/ScriptCorrector.git
+cd ScriptCorrector
 npm install
 ```
 
-### 启动开发服务器
+### 2. 运行自动化测试
+```bash
+npm test
+```
+
+### 3. 启动开发服务器
 ```bash
 npm run dev
 ```
-> 服务将在 `http://localhost:3000` 启动，后端 API 与 Vite 前端中间件协同运行。
+> 服务将在 `http://localhost:3000` 启动，后端 API 代理与 Vite 前端热服务协同运行。
 
-### 生产环境编译构建
+### 4. 生产构建与代码质量检查
 ```bash
-npm run build
-```
-
-### 类型与代码质量检查
-```bash
-npm run lint
+npm run lint    # 静态类型检查 (tsc --noEmit)
+npm run build   # 生产环境打包构建
 ```
 
 ---
 
-## 📄 开源许可证 (License)
+## 📜 开源许可证 (License)
 
-本项目遵循 [GNU General Public License v3.0 (GPL-3.0)](./LICENSE) 开源许可证。
+本项目采用 **[GNU General Public License v3.0 (GPL-3.0)](./LICENSE)** 许可证开源。
 
-您可以自由地运行、研读、修改与分发本软件。若您修改本项目或基于本项目构建衍生作品并公开发布，根据 GPL v3 条款要求，该衍生作品亦须以开源形式在 GPL v3 许可证下发布并公开相应源代码。
+欢迎自由使用、学习与二次分发，但衍生项目与修改版本必须同样以 GPL v3 保持开源并保留版权说明。

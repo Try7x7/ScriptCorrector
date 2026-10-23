@@ -1,5 +1,5 @@
 /**
- * Intelligent subtitle line-breaking and formatting engine tailored for French & general speech-to-text transcripts.
+ * Intelligent subtitle line-breaking and formatting engine tailored for Spanish & multi-language speech-to-text transcripts.
  */
 
 export interface SubtitleFormatOptions {
@@ -10,26 +10,38 @@ export interface SubtitleFormatOptions {
   visualOptEnd?: number;
 }
 
-// French articles, pronouns, prepositions and short words that shouldn't be orphaned at line ends
+// Spanish, French & common short non-terminal words that shouldn't be orphaned at line ends
 const NON_TERMINAL_WORDS = new Set([
-  'le', 'la', 'les', 'un', 'une', 'des', 'du', 'de', "d'", "l'",
+  // Spanish articles & contractions
+  'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas', 'lo', 'del', 'al',
+  // Spanish prepositions
+  'a', 'de', 'en', 'con', 'por', 'para', 'sin', 'sobre', 'hacia', 'hasta', 'desde', 'entre', 'bajo', 'ante', 'tras', 'según', 'contra',
+  // Spanish conjunctions
+  'y', 'e', 'o', 'u', 'pero', 'sino', 'mas', 'que', 'si', 'ni', 'pues', 'porque', 'aunque',
+  // Spanish possessives & clitic pronouns
+  'mi', 'mis', 'tu', 'tus', 'su', 'sus', 'nuestro', 'nuestra', 'nuestros', 'nuestras', 'vuestro', 'vuestra', 'vuestros', 'vuestras',
+  'me', 'te', 'se', 'nos', 'os', 'le', 'les',
+  // Spanish demonstratives & relatives
+  'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'esos', 'esas', 'aquel', 'aquella', 'cuyo', 'cuya', 'cuyos', 'cuyas',
+  // French articles, pronouns, prepositions and short words
+  'le', 'les', 'une', 'des', 'du', "d'", "l'",
   'ce', 'cet', 'cette', 'ces',
-  'mon', 'ton', 'son', 'ma', 'ta', 'sa', 'mes', 'tes', 'ses', 'notre', 'votre', 'leur', 'nos', 'vos', 'leurs',
-  'au', 'aux', 'à', 'en', 'dans', 'sur', 'sous', 'par', 'pour', 'avec', 'sans', 'chez',
-  'et', 'ou', 'mais', 'car', 'donc', 'or', 'ni',
-  'que', 'qui', 'quoi', 'dont', 'où', "qu'",
-  'ne', 'se', 'me', 'te', 'nous', 'vous', 'lui', 'leur', "s'", "m'", "t'", "n'", "j'", "c'"
+  'mon', 'ton', 'son', 'ma', 'ta', 'sa', 'mes', 'tes', 'ses', 'notre', 'votre', 'leur', 'vos', 'leurs',
+  'au', 'aux', 'à', 'dans', 'sur', 'sous', 'par', 'avec', 'chez',
+  'ou', 'car', 'donc', 'or',
+  'qui', 'quoi', 'dont', 'où', "qu'",
+  'ne', 'lui', "s'", "m'", "t'", "n'", "j'", "c'"
 ]);
 
 /**
- * Clean and normalize French quotation marks and extra spaces.
+ * Clean and normalize Spanish & French quotation marks, inverted marks and extra spaces.
  */
 export function cleanTranscriptText(text: string): string {
   if (!text) return '';
   return text
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
-    // Normalize French quotes
+    // Normalize quotes
     .replace(/<<\s*/g, '« ')
     .replace(/\s*>>/g, ' »')
     // Remove duplicate consecutive spaces
@@ -75,28 +87,39 @@ function scoreBreakPoint(
   if (len1 < minLen) score -= (minLen - len1) * 8;
   if (len2 < minLen) score -= (minLen - len2) * 8;
 
-  // 3. Punctuation bonus at split position
+  // 3. Punctuation bonus at split position (Spanish & Latin punctuation)
   const prevWord = words[splitIndex - 1] || '';
   const lastChar = prevWord.slice(-1);
 
-  if (['.', '!', '?', '…', '»'].includes(lastChar)) {
+  if (['.', '!', '?', '…', '»', '”'].includes(lastChar)) {
     score += 50;
-  } else if ([',', ';', ':', '—', ')', '»'].includes(lastChar)) {
+  } else if ([',', ';', ':', '—', ')', '»', '”'].includes(lastChar)) {
     score += 35;
   } else if (prevWord.endsWith('-')) {
     score += 10;
   }
 
   // 4. Grammar bonus (conjunctions or clauses at the start of line 2)
-  const nextWord = (words[splitIndex] || '').toLowerCase().replace(/^[«"'(]/, '');
-  if (['et', 'mais', 'car', 'donc', 'parce', 'puisque', 'lorsque', 'quand', 'comme', 'si', 'afin', 'pour', 'qui', 'que'].includes(nextWord)) {
+  // Strip opening quotes and Spanish inverted punctuation (¿, ¡)
+  const nextWord = (words[splitIndex] || '').toLowerCase().replace(/^[«"'(¿¡]/, '');
+  if ([
+    // Spanish conjunctions & subordinate markers
+    'y', 'e', 'o', 'u', 'pero', 'sino', 'porque', 'pues', 'como', 'cuando', 'donde', 'si', 'aunque', 'para', 'que', 'quien', 'ya', 'así',
+    // French conjunctions
+    'et', 'mais', 'car', 'donc', 'parce', 'puisque', 'lorsque', 'quand', 'afin', 'pour', 'qui'
+  ].includes(nextWord)) {
     score += 20;
   }
 
-  // 5. Grammar penalty: never leave dangling articles/prepositions at the end of line 1
-  const prevCleanWord = prevWord.toLowerCase().replace(/[.,!?:;»"()…]+$/g, '');
+  // 5. Grammar penalty: never leave dangling articles/prepositions/conjunctions at the end of line 1
+  const prevCleanWord = prevWord.toLowerCase().replace(/[.,!?:;»"()…¿¡]+$/g, '');
   if (NON_TERMINAL_WORDS.has(prevCleanWord)) {
     score -= 40;
+  }
+
+  // Extra penalty if next line begins with a standalone or misplaced punctuation mark
+  if (/^[.,!?:;»”)]/.test(words[splitIndex])) {
+    score -= 100;
   }
 
   // 6. Visual optimization check
@@ -170,16 +193,18 @@ function splitLongClause(
       currentWords.push(words[i]);
     } else {
       if (currentWords.length > 0) {
-        // Prevent dangling short words at line end
-        const lastWord = currentWords[currentWords.length - 1].toLowerCase().replace(/[.,!?:;»"()…]+$/g, '');
-        if (currentWords.length > 1 && NON_TERMINAL_WORDS.has(lastWord)) {
-          const popped = currentWords.pop()!;
-          lines.push(currentWords.join(' '));
-          currentWords = [popped, words[i]];
-        } else {
-          lines.push(currentWords.join(' '));
-          currentWords = [words[i]];
+        // Prevent dangling short non-terminal words (prepositions, articles, conjunctions) at line end
+        const poppedWords: string[] = [];
+        while (currentWords.length > 1) {
+          const lastWord = currentWords[currentWords.length - 1].toLowerCase().replace(/[.,!?:;»"()…]+$/g, '');
+          if (NON_TERMINAL_WORDS.has(lastWord)) {
+            poppedWords.unshift(currentWords.pop()!);
+          } else {
+            break;
+          }
         }
+        lines.push(currentWords.join(' '));
+        currentWords = [...poppedWords, words[i]];
       } else {
         lines.push(words[i]);
         currentWords = [];
@@ -202,11 +227,11 @@ export function formatSubtitles(
   options: SubtitleFormatOptions = {}
 ): string {
   const {
-    maxLen = 32,
+    maxLen = 25,
     minLen = 12,
     enableVisualOpt = true,
-    visualOptStart = 25,
-    visualOptEnd = 30
+    visualOptStart = 20,
+    visualOptEnd = 24
   } = options;
 
   if (!text || !text.trim()) return '';
@@ -359,16 +384,6 @@ export function generateSrtContent(
 }
 
 /**
- * Sanitize filename to prevent directory traversal and invalid filesystem characters.
- */
-function sanitizeDownloadFilename(filename: string): string {
-  return filename
-    .replace(/[/\\?%*:|"<>]/g, '_')
-    .trim()
-    .slice(0, 100);
-}
-
-/**
  * Trigger download of SRT file in the browser.
  */
 export function downloadSrtFile(
@@ -384,10 +399,14 @@ export function downloadSrtFile(
   const link = document.createElement('a');
   link.href = url;
   
-  const safeName = sanitizeDownloadFilename(filename);
-  const cleanFilename = safeName.toLowerCase().endsWith('.srt')
-    ? safeName
-    : `${safeName.replace(/\.[^/.]+$/, '') || 'subtitles'}.srt`;
+  const sanitizedBase = (filename || 'subtitles')
+    .replace(/[/\\?%*:|"<>]+/g, '_')
+    .replace(/[\r\n\x00-\x1F\x7F]+/g, '')
+    .trim() || 'subtitles';
+
+  const cleanFilename = sanitizedBase.toLowerCase().endsWith('.srt')
+    ? sanitizedBase
+    : `${sanitizedBase.replace(/\.[^/.]+$/, '') || 'subtitles'}.srt`;
 
   link.download = cleanFilename;
   document.body.appendChild(link);
@@ -458,10 +477,14 @@ export function downloadTxtFile(
   const link = document.createElement('a');
   link.href = url;
   
-  const safeName = sanitizeDownloadFilename(filename);
-  const cleanFilename = safeName.toLowerCase().endsWith('.txt')
-    ? safeName
-    : `${safeName.replace(/\.[^/.]+$/, '') || 'subtitles'}.txt`;
+  const sanitizedBase = (filename || 'subtitles')
+    .replace(/[/\\?%*:|"<>]+/g, '_')
+    .replace(/[\r\n\x00-\x1F\x7F]+/g, '')
+    .trim() || 'subtitles';
+
+  const cleanFilename = sanitizedBase.toLowerCase().endsWith('.txt')
+    ? sanitizedBase
+    : `${sanitizedBase.replace(/\.[^/.]+$/, '') || 'subtitles'}.txt`;
 
   link.download = cleanFilename;
   document.body.appendChild(link);

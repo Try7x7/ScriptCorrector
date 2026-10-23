@@ -1,4 +1,5 @@
 import express from "express";
+import http from "http";
 import { createServer as createViteServer } from "vite";
 import multer from "multer";
 import axios from "axios";
@@ -7,8 +8,6 @@ import * as dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 import path from "path";
 import { fileURLToPath } from "url";
-import fs from "fs";
-import rateLimit from "express-rate-limit";
 
 dotenv.config();
 
@@ -17,81 +16,101 @@ const __dirname = path.dirname(__filename);
 
 const PORT = 3000;
 
-// Security: Standard rate limiters using express-rate-limit to mitigate DoS (CodeQL js/missing-rate-limiting)
-const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1000, // 1000 requests per 15 minutes per IP
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    error: "请求过于频繁 (Too Many Requests)",
-    details: "超出常规访问速率限制，请稍后再试。"
-  }
-});
-
-const transcribeLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 12, // 12 transcription uploads per minute
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    error: "请求过于频繁 (Too Many Requests)",
-    details: "已超出音频转录速率限制，请稍后再试。"
-  }
-});
-
-const correctLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 20, // 20 text corrections per minute
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    error: "请求过于频繁 (Too Many Requests)",
-    details: "已超出文本校对速率限制，请稍后再试。"
-  }
-});
-
-// Security: Allowed audio MIME types and file extensions
-const ALLOWED_MIME_TYPES = new Set([
-  'audio/mpeg',
-  'audio/mp3',
-  'audio/wav',
-  'audio/x-wav',
-  'audio/wave',
-  'audio/x-pn-wav',
-  'audio/m4a',
-  'audio/x-m4a',
-  'audio/aac',
-  'audio/ogg',
-  'audio/webm',
-  'audio/flac',
-  'audio/x-flac',
-  'audio/mp4',
+// Configure allowed audio MIME types and extensions for upload validation
+const ALLOWED_AUDIO_MIMES = new Set([
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/wav",
+  "audio/wave",
+  "audio/x-wav",
+  "audio/ogg",
+  "audio/vorbis",
+  "audio/m4a",
+  "audio/x-m4a",
+  "audio/mp4",
+  "audio/aac",
+  "audio/flac",
+  "audio/webm",
+  "application/ogg"
 ]);
 
-const ALLOWED_EXTENSIONS = new Set([
-  '.mp3', '.wav', '.m4a', '.aac', '.ogg', '.webm', '.flac', '.mp4'
+const ALLOWED_AUDIO_EXTS = new Set([
+  ".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".webm", ".wma", ".oga"
 ]);
 
-// Configure multer with strict file filtering and limits
+// Configure multer for memory storage with a 50MB limit and strict MIME + extension validation
 const upload = multer({ 
   storage: multer.memoryStorage(),
-  limits: { 
-    fileSize: 50 * 1024 * 1024, // 50MB
-    files: 1
-  },
-  fileFilter: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || '').toLowerCase();
-    const isMimeAllowed = ALLOWED_MIME_TYPES.has(file.mimetype) || file.mimetype.startsWith('audio/');
-    const isExtAllowed = ALLOWED_EXTENSIONS.has(ext);
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    const isMimeValid = ALLOWED_AUDIO_MIMES.has(file.mimetype.toLowerCase()) || file.mimetype.startsWith("audio/");
+    const isExtValid = ALLOWED_AUDIO_EXTS.has(ext);
 
-    if (isMimeAllowed || isExtAllowed) {
-      cb(null, true);
-    } else {
-      cb(new Error(`不支持的文件格式。请上传音频文件 (支持格式: ${Array.from(ALLOWED_EXTENSIONS).join(', ')})`));
+    // Security Fix: Require BOTH valid audio MIME type AND recognized audio extension
+    if (!isMimeValid || !isExtValid) {
+      return cb(new Error("Invalid file type. Only standard audio files (MP3, WAV, M4A, OGG, AAC, FLAC, WEBM) are permitted."));
     }
+    cb(null, true);
   }
 });
+
+// In-memory rate limiter with isolated state and automatic cleanup
+function createRateLimiter(maxRequests: number, windowMs: number) {
+  const localMap = new Map<string, { count: number; resetTime: number }>();
+
+  // Periodically clean up expired entries to prevent memory leaks
+  const timer = setInterval(() => {
+    const now = Date.now();
+    for (const [key, val] of localMap.entries()) {
+      if (now > val.resetTime) localMap.delete(key);
+    }
+  }, Math.max(30000, windowMs));
+  timer.unref();
+
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    const now = Date.now();
+
+    // Bound map size to prevent unbounded memory growth
+    if (localMap.size > 5000) {
+      for (const [key, val] of localMap.entries()) {
+        if (now > val.resetTime) localMap.delete(key);
+      }
+    }
+
+    const record = localMap.get(ip);
+
+    if (!record || now > record.resetTime) {
+      localMap.set(ip, { count: 1, resetTime: now + windowMs });
+      return next();
+    }
+
+    if (record.count >= maxRequests) {
+      return res.status(429).json({
+        error: "Too Many Requests",
+        details: "Rate limit exceeded. Please wait a moment before sending more requests."
+      });
+    }
+
+    record.count++;
+    next();
+  };
+}
+
+const apiRateLimiter = createRateLimiter(120, 60 * 1000); // 120 requests per minute per IP
+
+// Whitelist of supported Gemini models
+const ALLOWED_GEMINI_MODELS = new Set([
+  "gemini-3.8-flash",
+  "gemini-flash-latest",
+  "gemini-3.6-flash",
+  "gemini-2.5-flash",
+  "gemini-2.5-pro",
+  "gemini-3-flash-preview",
+  "gemini-1.5-flash",
+  "gemini-2.0-flash"
+]);
 
 // Lazy initialize Gemini API client
 let aiClient: GoogleGenAI | null = null;
@@ -116,95 +135,26 @@ function getGeminiClient(): GoogleGenAI {
 // Helper to wait
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Prompt template path and in-memory cache
-const PROMPT_TEMPLATE_PATH = path.join(__dirname, "config", "promptTemplate.md");
-let cachedPromptTemplate: string = "";
-
-function loadPromptTemplate(): string {
-  if (cachedPromptTemplate) {
-    return cachedPromptTemplate;
-  }
-  try {
-    if (fs.existsSync(PROMPT_TEMPLATE_PATH)) {
-      cachedPromptTemplate = fs.readFileSync(PROMPT_TEMPLATE_PATH, "utf-8");
-      console.log(`[PromptTemplate] Successfully loaded prompt template from ${PROMPT_TEMPLATE_PATH} (${cachedPromptTemplate.length} chars)`);
-      return cachedPromptTemplate;
-    } else {
-      console.warn(`[PromptTemplate] Warning: ${PROMPT_TEMPLATE_PATH} not found.`);
-    }
-  } catch (err: any) {
-    console.error(`[PromptTemplate] Error reading prompt template from ${PROMPT_TEMPLATE_PATH}:`, err?.message || err);
-  }
-
-  return "";
-}
-
-// Pre-load prompt template into memory at startup
-loadPromptTemplate();
-
-// Helper to construct correction prompt safely on the server side using the external Markdown template
-function buildCorrectionPrompt(
-  transcribedText: string,
-  referenceText: string,
-  options: {
-    enableLineBreaks?: boolean;
-    maxLineLength?: number;
-    minLineLength?: number;
-    enableVisualOptimization?: boolean;
-    visualOptStart?: number;
-    visualOptEnd?: number;
-  }
-): string {
-  const enableLineBreaks = Boolean(options.enableLineBreaks);
-  const maxLineLength = Math.max(10, Math.min(100, Number(options.maxLineLength) || 32));
-  const minLineLength = Math.max(4, Math.min(maxLineLength, Number(options.minLineLength) || 12));
-  const enableVisualOpt = Boolean(options.enableVisualOptimization);
-  const visualOptStart = Number(options.visualOptStart) || 25;
-  const visualOptEnd = Number(options.visualOptEnd) || 30;
-
-  const lineBreakRule = enableLineBreaks
-    ? `- **强制断行要求 (字幕排版关键准则，必须使用 \\n 换行符)**：
-  - **逐行输出**：请务必在 \`correctedText\` 中**使用换行符 (\\n)** 将整篇文本分割为一行一行的标准字幕，不要输出为一整段不换行的长篇文本！
-  - **字符数严格限制 (以字母、标点和空格总字符数为准)**：
-    - 每行最长不得超过 ${maxLineLength} 个字符（包含标点与空格）。
-    - 每行最短建议不低于 ${minLineLength} 个字符（避免单个词独立成行）。
-${enableVisualOpt ? `    - **避开视觉盲区**：尽量避免单行字符数落在 ${Math.min(visualOptStart, maxLineLength - 2)} 到 ${Math.min(visualOptEnd, maxLineLength)} 个字符的区间。` : ''}
-  - **语义断行法则**：
-    1. 优先在句子与分句标点处（句号 .、问号 ?、感叹号 !、逗号 ,、分号 ;、冒号 :、省略号 …、法语引号 « »）自然停顿断行。
-    2. 依据语法结构（主谓宾、关系从句、介词短语）合理断行，切勿在单词中间截断。
-    3. 严禁单字介词/冠词在行末悬挂或孤立（如 « et », « de », « le », « la », « un », « une », « à », « pour » 必须与后接名词或从句在同一行）。
-    4. 对称平衡：长句拆分为两行时，前后两行字符数尽量均衡。`
-    : '- **断行要求**：不需要换行，直接输出为一整段连续文本（不包含换行符）。';
-
-  const template = loadPromptTemplate();
-  return template
-    .replace('{{lineBreakRule}}', lineBreakRule)
-    .replace('{{transcribedText}}', transcribedText)
-    .replace('{{referenceText}}', referenceText);
-}
-
 async function startServer() {
   const app = express();
+  const server = http.createServer(app);
 
-  // Security & Networking: Trust reverse proxy (nginx/Cloud Run) for accurate client IP in rate limiting
+  // Trust first proxy hop in Cloud Run / Nginx
   app.set("trust proxy", 1);
-
-  // Security: Disable X-Powered-By header
   app.disable("x-powered-by");
 
-  // Security: Apply defensive HTTP security headers compatible with AI Studio iframe embedding
+  // Security Headers: prevent MIME-type sniffing and set safe referrer policy
   app.use((req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("X-DNS-Prefetch-Control", "off");
+    res.setHeader("X-XSS-Protection", "0");
     next();
   });
 
-  // Security: Apply general rate limiter across all requests to protect file serving & mitigate DoS (CodeQL js/missing-rate-limiting)
-  app.use(generalLimiter);
-
-  // Security: Limit JSON payload to 2MB to prevent memory exhaustion DoS
-  app.use(express.json({ limit: "2mb" }));
-  app.use(express.urlencoded({ extended: true, limit: "2mb" }));
+  // Limit JSON/URL-encoded payload size to 5MB to prevent memory exhaustion DoS
+  app.use(express.json({ limit: "5mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "5mb" }));
 
   // Request logger
   app.use((req, res, next) => {
@@ -216,56 +166,62 @@ async function startServer() {
 
   // Health check route
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", version: "1.1.0", timestamp: new Date().toISOString() });
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
   // API route to handle audio upload and transcription
-  app.post(["/api/transcribe", "/api/transcribe/"], transcribeLimiter, (req, res, next) => {
+  app.post(["/api/transcribe", "/api/transcribe/"], apiRateLimiter, (req, res, next) => {
     upload.single("audio")(req, res, (err) => {
       if (err) {
-        console.error("Multer error:", err);
+        console.error("Multer upload error:", err);
         if (err instanceof multer.MulterError) {
-          return res.status(400).json({ error: `上传错误: ${err.message}` });
+          return res.status(400).json({ error: `Upload error: ${err.message}` });
         }
-        return res.status(400).json({ error: err.message || "上传音频校验失败" });
+        return res.status(400).json({ error: `Upload error: ${err.message}` });
       }
       next();
     });
   }, async (req, res) => {
     let apiKey = "";
+    let isCustomKey = false;
     try {
       console.log("--- New Transcription Request ---");
       if (!req.file) {
         console.error("No file in request");
-        return res.status(400).json({ error: "请上传音频文件 (No audio file provided)" });
+        return res.status(400).json({ error: "No audio file provided" });
       }
 
-      // Security: Validate and sanitize custom API key if provided
-      const rawCustomApiKey = req.headers['x-gladia-api-key'] || req.body.gladiaApiKey;
-      let customApiKey = "";
-      if (typeof rawCustomApiKey === 'string' && rawCustomApiKey.trim()) {
-        const trimmed = rawCustomApiKey.trim();
-        // Gladia API key validation: alphanumeric, dash, underscore, 16-128 chars
-        if (/^[a-zA-Z0-9_\-]{16,128}$/.test(trimmed)) {
-          customApiKey = trimmed;
+      // Prioritize API key from headers, then request body, then environment variable
+      const customApiKey = req.headers['x-gladia-api-key'] || req.body.gladiaApiKey;
+      isCustomKey = typeof customApiKey === 'string' && customApiKey.trim().length > 0;
+      
+      if (isCustomKey) {
+        const trimmedKey = (customApiKey as string).trim();
+        // Gladia API key format validation: alphanumeric, dash, underscore, 16-128 chars
+        if (/^[a-zA-Z0-9_\-]{16,128}$/.test(trimmedKey)) {
+          apiKey = trimmedKey;
+          console.log("Using validated customer-provided API key.");
         } else {
-          return res.status(400).json({ error: "提供的 Gladia API Key 格式不正确，请检查输入。" });
+          return res.status(400).json({ 
+            error: "提供的 Gladia API Key 格式不正确，请检查输入 (应为16-128位字母数字破折号组合)。" 
+          });
         }
+      } else {
+        apiKey = process.env.GLADIA_API_KEY || "";
+        console.log("Using default system API key.");
       }
-
-      apiKey = customApiKey || process.env.GLADIA_API_KEY || "";
 
       if (!apiKey || apiKey === "MY_GLADIA_API_KEY") {
         console.error("Gladia API key is missing or placeholder");
         return res.status(400).json({ 
           error: "Gladia API key is not configured",
-          details: "Please provide a valid key in the settings above or contact the administrator."
+          details: "Please configure a valid key or contact the administrator."
         });
       }
 
-      // Security: Sanitize original filename before passing to multipart form
-      const rawName = path.basename(req.file.originalname || "audio.mp3");
-      const safeFilename = rawName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 100) || "audio.mp3";
+      // Sanitize user-provided filename to prevent CRLF injection, header splitting, and directory traversal
+      const rawOriginalName = req.file.originalname || "audio.mp3";
+      const safeFilename = path.basename(rawOriginalName).replace(/[\r\n"\x00-\x1F\x7F]+/g, "").trim() || "audio.mp3";
 
       // Step 1: Upload the audio file to Gladia
       const formData = new FormData();
@@ -283,34 +239,56 @@ async function startServer() {
         },
         maxContentLength: 60 * 1024 * 1024,
         maxBodyLength: 60 * 1024 * 1024,
-        timeout: 60000,
+        maxRedirects: 3,
       });
 
       const audioUrl = uploadResponse.data.audio_url;
+      console.log("Upload successful, audio_url received");
 
       if (!audioUrl || typeof audioUrl !== "string") {
         throw new Error("Failed to get audio_url from Gladia upload response");
       }
 
-      const parsedAudioUrl = new URL(audioUrl);
-      if (parsedAudioUrl.protocol !== "https:") {
-        throw new Error("Invalid audio_url protocol returned by upload service");
+      // Security: Validate audio_url protocol is strictly HTTPS to prevent SSRF
+      try {
+        const parsedAudioUrl = new URL(audioUrl);
+        if (parsedAudioUrl.protocol !== "https:") {
+          throw new Error("Invalid audio_url protocol returned by upload service");
+        }
+      } catch (urlErr: any) {
+        throw new Error(`Invalid audio_url from upload service: ${urlErr.message}`);
       }
 
       // Step 2: Start transcription
       console.log("Transcription upload successful. Starting transcription task...");
+      const rawLanguage = (typeof req.body.language === 'string' && req.body.language.trim()) || 
+                          (typeof req.headers['x-target-language'] === 'string' && req.headers['x-target-language'].trim()) || 
+                          'es';
+      // Whitelist language code format (2-5 lowercase alphanumeric/hyphen)
+      const language = /^[a-z]{2}(-[A-Z]{2})?$/.test(rawLanguage) ? rawLanguage : 'es';
+      console.log(`Setting transcription language to: ${language}`);
+
+      const transcriptionPayload: Record<string, any> = {
+        audio_url: audioUrl,
+        diarization: false,
+      };
+
+      if (language) {
+        transcriptionPayload.language_config = {
+          languages: [language],
+          code_switching: false,
+        };
+      }
+
       const transcriptionResponse = await axios.post(
         "https://api.gladia.io/v2/transcription",
-        {
-          audio_url: audioUrl,
-          diarization: false,
-        },
+        transcriptionPayload,
         {
           headers: {
             "x-gladia-key": apiKey,
             "Content-Type": "application/json",
           },
-          timeout: 30000,
+          maxRedirects: 3,
         }
       );
 
@@ -318,14 +296,20 @@ async function startServer() {
       const taskId = transcriptionResponse.data.id;
       console.log(`Transcription task started. Task ID: ${taskId}`);
 
-      if (!resultUrl || typeof resultUrl !== "string") {
+      if (!resultUrl) {
         throw new Error("Failed to get result_url from Gladia transcription response");
       }
 
-      // Security: Validate resultUrl host and protocol is strictly HTTPS to Gladia API to prevent SSRF
-      const parsedResultUrl = new URL(resultUrl);
+      // SSRF & protocol validation on resultUrl: must be https:// and host must be api.gladia.io
+      let parsedResultUrl: URL;
+      try {
+        parsedResultUrl = new URL(resultUrl);
+      } catch {
+        throw new Error("Invalid result_url returned by transcription provider");
+      }
+
       if (parsedResultUrl.protocol !== "https:" || parsedResultUrl.hostname !== "api.gladia.io") {
-        throw new Error("Invalid result_url returned by transcription service");
+        throw new Error(`Untrusted transcription result host: ${parsedResultUrl.hostname}`);
       }
 
       // Step 3: Poll for the result
@@ -347,7 +331,7 @@ async function startServer() {
             headers: {
               "x-gladia-key": apiKey,
             },
-            timeout: 15000,
+            maxRedirects: 3,
           });
 
           status = pollResponse.data.status;
@@ -356,12 +340,12 @@ async function startServer() {
             transcriptionResult = pollResponse.data.result;
             console.log(`Task ${taskId} is DONE!`);
           } else if (status === "error") {
-            console.error(`Task ${taskId} failed:`, pollResponse.data);
-            const errInfo = pollResponse.data.error?.message || "Transcription processing failed";
-            throw new Error(`Gladia task error: ${errInfo}`);
+            console.error(`Task ${taskId} reported an error.`);
+            throw new Error(`Gladia task error: ${JSON.stringify(pollResponse.data.error || "Unknown task error")}`);
           }
         } catch (pollErr: any) {
           console.error(`Error during polling task ${taskId}:`, pollErr.message);
+          // If polling fails with 4xx from Gladia, stop retrying
           if (pollErr.response?.status >= 400 && pollErr.response?.status < 500) {
             throw pollErr;
           }
@@ -383,94 +367,74 @@ async function startServer() {
       console.error("Transcription process failed!");
       
       let errorMessage = "Transcription failed";
-      let errorDetail = "An unexpected error occurred during audio transcription.";
-      const upstreamStatus = error.response?.status;
+      let errorDetail: any = error.message;
       
       if (error.response) {
-        console.error("Gladia API error response status:", upstreamStatus);
-        if (upstreamStatus === 401 || upstreamStatus === 403) {
-          errorMessage = "Gladia API 认证失败，请检查 API Key 是否有效。";
-          errorDetail = "API Key 无效或权限不足。";
-        } else if (upstreamStatus === 402) {
-          errorMessage = "Gladia 账户额度不足 (402 Payment Required)。";
-          errorDetail = "账户免费或订阅点数已耗尽，请更换 API Key。";
-        } else if (upstreamStatus === 429) {
-          errorMessage = "Gladia API 请求速率超出限制 (429 Too Many Requests)。";
-          errorDetail = "请稍后重试。";
-        } else {
-          errorMessage = `Gladia API 错误 (${upstreamStatus})`;
-          errorDetail = typeof error.response.data?.message === 'string' 
-            ? error.response.data.message 
-            : "上游服务处理失败";
+        const upstreamStatus = error.response.status;
+        console.error("Gladia API error status:", upstreamStatus);
+
+        // Explicit 402 Payment Required handling
+        if (upstreamStatus === 402) {
+          return res.status(402).json({
+            error: "Gladia API 免费额度已耗尽 (Payment Required / Quota Exceeded)",
+            details: "当前 Gladia 账号的免费转录时长已全部用完。请在界面设置中填入新的 Gladia API Key 进行应急切换。",
+            customKeyUsed: isCustomKey
+          });
         }
+
+        // Explicit 429 Rate Limit handling
+        if (upstreamStatus === 429) {
+          return res.status(429).json({
+            error: "Gladia API 请求频率过高 (Too Many Requests)",
+            details: "语音识别服务触发了频次限制，请稍候 1~2 分钟再试。",
+            customKeyUsed: isCustomKey
+          });
+        }
+
+        errorMessage = `Gladia API Error (${upstreamStatus})`;
+        errorDetail = error.response.data?.message || error.response.data?.error || "Upstream provider error";
+        
+        return res.status(upstreamStatus >= 400 && upstreamStatus < 500 ? upstreamStatus : 500).json({
+          error: errorMessage,
+          details: typeof errorDetail === "string" ? errorDetail : "Transcription error occurred",
+          customKeyUsed: isCustomKey
+        });
       } else if (error.request) {
-        errorMessage = "无法连接至 Gladia 语音服务 (No response received)";
-        errorDetail = "网络连接超时或上游服务无响应。";
-      } else {
-        errorMessage = error.message || "音频处理初始化异常";
-        errorDetail = error.message || "Internal error";
+        errorMessage = "No response from Gladia API";
+        errorDetail = "The upstream speech-to-text service timed out or was unreachable.";
       }
       
-      // Security: Never leak full or masked system keys to the client
-      const statusCode = upstreamStatus || 500;
-      res.status(statusCode).json({
+      // Do not leak secret key characters in error response
+      res.status(500).json({
         error: errorMessage,
-        statusCode,
-        suspectedReason: errorDetail,
-        quotaHint: upstreamStatus === 402 || upstreamStatus === 429 
-          ? "请前往 Gladia 控制台 (app.gladia.io) 检查当前账户的转录时长额度，或在左侧面板填入新的有效 API Key。" 
-          : "请检查音频文件格式或网络连接状态。",
-        details: errorDetail,
+        details: typeof errorDetail === "string" ? errorDetail : "Transcription error occurred",
+        customKeyUsed: isCustomKey
       });
     }
   });
 
   // API route for text correction using Gemini
-  // Allowed models allowlist to prevent arbitrary model specification
-  const ALLOWED_MODELS = new Set([
-    "gemini-3.8-flash",
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
-    "gemini-flash-latest",
-    "gemini-3.6-flash",
-  ]);
-
-  app.post("/api/correct", correctLimiter, async (req, res) => {
-    // Explicitly set JSON content-type header for API response
+  app.post(["/api/correct", "/api/correct/"], apiRateLimiter, async (req, res) => {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
-
-    let targetModel = "gemini-3.8-flash";
-
     try {
-      const { 
-        transcribedText, 
-        referenceText, 
-        options = {}, 
-        prompt: rawPrompt, 
-        model = "gemini-3.8-flash" 
-      } = req.body;
+      const { prompt, model = "gemini-3.8-flash" } = req.body;
 
-      // Model validation - map legacy gemini-3.6-flash to gemini-3.8-flash
-      const validatedModel = ALLOWED_MODELS.has(model) ? model : "gemini-3.8-flash";
-      targetModel = validatedModel === "gemini-3.6-flash" ? "gemini-3.8-flash" : validatedModel;
+      if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
+        return res.status(400).json({ error: "Prompt is required and must be a non-empty string" });
+      }
 
-      // Input validation and safe prompt construction
-      let finalPrompt = "";
+      // Prevent resource exhaustion from oversized prompts
+      if (prompt.length > 100000) {
+        return res.status(400).json({ 
+          error: "Prompt exceeds maximum allowed length of 100,000 characters",
+          errorCode: "HTTP 400 / PAYLOAD_TOO_LARGE",
+          errorReason: "提交的文本超过了最大单次处理限制（10万字符）。"
+        });
+      }
 
-      if (typeof transcribedText === "string" && typeof referenceText === "string") {
-        // Enforce maximum length of 100,000 characters to prevent buffer exhaustion
-        if (transcribedText.length > 100000 || referenceText.length > 100000) {
-          return res.status(400).json({ error: "文本长度超过最大限制 (Text exceeds 100,000 characters limit)" });
-        }
-        finalPrompt = buildCorrectionPrompt(transcribedText, referenceText, options);
-      } else if (typeof rawPrompt === "string" && rawPrompt.trim()) {
-        // Fallback for legacy prompt with length check
-        if (rawPrompt.length > 150000) {
-          return res.status(400).json({ error: "Prompt 长度超出限制 (Prompt exceeds maximum length)" });
-        }
-        finalPrompt = rawPrompt;
-      } else {
-        return res.status(400).json({ error: "缺少必要的文本参数 (Missing transcribedText and referenceText or prompt)" });
+      // Restrict model to verified whitelist
+      if (typeof model !== "string" || !ALLOWED_GEMINI_MODELS.has(model)) {
+        return res.status(400).json({ error: "Invalid model specified. Only approved Gemini models are supported." });
       }
 
       let ai: GoogleGenAI;
@@ -480,24 +444,36 @@ async function startServer() {
         return res.status(500).json({ error: err.message || "Gemini API key is not configured" });
       }
 
-      console.log(`--- New Correction Request using ${targetModel} (0 retries mode) ---`);
+      // Map legacy or deprecated aliases to current official recommended models
+      let requestedModel = model;
+      if (
+        model === "gemini-3.6-flash" ||
+        model === "gemini-2.5-flash" ||
+        model === "gemini-1.5-flash" ||
+        model === "gemini-2.0-flash" ||
+        model === "gemini-3-flash-preview"
+      ) {
+        requestedModel = "gemini-3.8-flash";
+      }
 
-      // 0 retries mode: execute exactly 1 single attempt to conserve daily quota (RPD/RPM)
+      console.log(`[Gemini] Correction request using model: ${requestedModel} (Retries: 0 to preserve RPM/RPD quota)`);
+
+      // Zero retries: single attempt only to protect user's limited free tier quota (5 RPM / 20 RPD)
       const response = await ai.models.generateContent({ 
-        model: targetModel,
-        contents: finalPrompt,
+        model: requestedModel,
+        contents: prompt,
         config: {
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
             properties: {
               correctedText: { 
-                type: Type.STRING, 
+                type: Type.STRING,
                 description: "The final corrected transcript (Text C). If line breaks were requested in the prompt, separate every single line with a newline character (\\n)."
               },
               differences: { 
                 type: Type.STRING, 
-                description: "Analysis of differences between Text C and Text B in Chinese"
+                description: "Detailed analysis of differences between Text C and Text B (palabras cambiadas, omitidas, añadidas o discrepancias con el guion original). Written in Spanish by default or the language requested in the prompt."
               }
             },
             required: ["correctedText", "differences"]
@@ -506,66 +482,102 @@ async function startServer() {
       });
 
       const text = response.text;
-      console.log("Correction completed successfully.");
-      return res.json({ text });
+      console.log("[Gemini] Correction completed successfully (1 attempt consumed).");
+      res.json({ text, model: requestedModel });
     } catch (error: any) {
-      console.error("Gemini correction failed:", error?.message || error);
+      console.error("[Gemini] Correction failed:", error);
       
-      const rawStatus = error?.status || error?.statusCode;
-      const statusMsg = String(error?.message || "");
+      const status = error.status || 500;
+      const rawMsg = error.message || "";
 
-      let statusCode = 500;
-      let errorTitle = "文本校对处理失败";
-      let suspectedReason = "模型在处理请求时发生内部异常。";
-      let quotaHint = "请前往 Google AI Studio (aistudio.google.com) 检查您的账号使用量与额度。";
+      let errorCode = `HTTP ${status}`;
+      let errorReason = "请求 Google Gemini 官方接口时返回异常。";
+      let quotaTip = "当前免费层配额通常为 5 RPM（每分钟 5 次）与 20 RPD（每日 20 次）。系统已关闭后台自动重试以节约您的限额，请前往 Google AI Studio 检查用量。";
 
-      if (rawStatus === 429 || statusMsg.includes("429") || statusMsg.includes("RESOURCE_EXHAUSTED")) {
-        statusCode = 429;
-        errorTitle = "Gemini API 配额超限或并发过快 (Quota / Rate Limit Exceeded)";
-        suspectedReason = "每分钟请求频率超出限制（如超出免费层 5 RPM 限制）或每日请求总额度已用尽（如超出 20 RPD 限制）。";
-        quotaHint = "请前往 Google AI Studio (aistudio.google.com) 控制台检查当前账号的 RPM (每分钟请求数) 与 RPD (每日请求数) 进度条。免费层每分钟最多支持 5 次请求，请等待 1 分钟后重试。";
-      } else if (rawStatus === 503 || statusMsg.includes("503") || statusMsg.includes("Service Unavailable") || statusMsg.includes("overloaded")) {
-        statusCode = 503;
-        errorTitle = "Gemini 模型服务暂时不可用 (Service Unavailable)";
-        suspectedReason = "Google 云端该模型服务器当前遭遇突发高峰流量、节点拥堵或正在进行临时扩容维护。当前已按要求配置为 0 次自动重试，本次报错未额外浪费您的宝贵额度。";
-        quotaHint = "请稍候 10~30 秒后重试。同时请留意 Google AI Studio 状态，并检查当前时间段的 RPM / TPM 用量。";
-      } else if (rawStatus === 403 || statusMsg.includes("403") || statusMsg.includes("PERMISSION_DENIED")) {
-        statusCode = 403;
-        errorTitle = "API 访问权限受限 (Permission Denied)";
-        suspectedReason = "当前 API 凭据无效、权限不足，或当前 IP 所在网络区域不受 Gemini 服务支持。";
-        quotaHint = "请在 Google AI Studio 控制台中检查当前工作区注入的 API Key 状态是否正常。";
-      } else if (rawStatus === 404 || statusMsg.includes("404") || statusMsg.includes("NOT_FOUND")) {
-        statusCode = 404;
-        errorTitle = "模型不存在或已停用 (Model Not Found)";
-        suspectedReason = `请求的模型 ${targetModel} 在当前服务节点不可用。`;
-        quotaHint = "系统已选用最新的 gemini-3.8-flash 模型，请检查模型支持列表。";
-      } else if (statusMsg.includes("fetch failed") || statusMsg.includes("ENOTFOUND") || statusMsg.includes("ETIMEDOUT")) {
-        statusCode = 504;
-        errorTitle = "模型服务器网络连接超时";
-        suspectedReason = "后端连接 Google AI 端点时发生网络连接超时或中断。";
-        quotaHint = "请检查容器外网访问状态或稍候重试。";
+      // 503 Service Unavailable / High demand
+      if (status === 503 || rawMsg.includes("503") || rawMsg.includes("UNAVAILABLE") || rawMsg.includes("high demand") || rawMsg.includes("Service Unavailable")) {
+        errorCode = "HTTP 503 / UNAVAILABLE";
+        errorReason = "Google Gemini 官方服务器当前出现突发高并发负载（Service Unavailable）。为了保护您的宝贵每日配额，系统未在后台发起额外的自动重试。";
+        quotaTip = "免费层额度紧张（5 RPM / 20 RPD）。请稍候 1~2 分钟待 Google 负载回落后再手动点击重试，并在 Google AI Studio 控制台查看当前使用量。";
+        return res.status(503).json({ 
+          error: "Gemini 官方服务暂时过载 (503 Service Unavailable)",
+          errorCode,
+          errorReason,
+          quotaTip,
+          details: rawMsg
+        });
       }
 
-      return res.status(statusCode).json({
-        error: errorTitle,
-        statusCode,
-        suspectedReason,
-        quotaHint,
-        details: error?.message || String(error)
+      // 429 Quota Exceeded / Rate Limit
+      if (status === 429 || rawMsg.includes("429") || rawMsg.includes("RESOURCE_EXHAUSTED") || rawMsg.includes("quota") || rawMsg.includes("Quota Exceeded")) {
+        errorCode = "HTTP 429 / RESOURCE_EXHAUSTED";
+        errorReason = "已触发 Google Gemini API 配额速率限制（通常因超过 5 RPM 突发上限或耗尽了今日 20 RPD 免费总额）。";
+        quotaTip = "请前往 Google AI Studio (aistudio.google.com) 控制台检查您当天的 RPD (Requests Per Day) 剩余次数。若已达当日上限需等待次日重置或绑定计费项目。";
+        return res.status(429).json({ 
+          error: "Gemini API 配额已耗尽 (429 Quota Exceeded)",
+          errorCode,
+          errorReason,
+          quotaTip,
+          details: rawMsg
+        });
+      }
+
+      // 404 Model Not Found
+      if (status === 404 || rawMsg.includes("404") || rawMsg.includes("NOT_FOUND")) {
+        errorCode = "HTTP 404 / NOT_FOUND";
+        errorReason = "调用的模型在该项目中不可用或已弃用。建议确认模型权限与配置。";
+        quotaTip = "请检查 Google AI Studio 控制台中的模型可用性。";
+        return res.status(404).json({
+          error: "模型不存在或已停用 (404 Not Found)",
+          errorCode,
+          errorReason,
+          quotaTip,
+          details: rawMsg
+        });
+      }
+
+      // 401/403 Permission Denied
+      if (status === 401 || status === 403 || rawMsg.includes("401") || rawMsg.includes("403") || rawMsg.includes("PERMISSION_DENIED")) {
+        errorCode = `HTTP ${status} / PERMISSION_DENIED`;
+        errorReason = "GEMINI_API_KEY 无效、已失效或未被授予该模型访问权限。";
+        quotaTip = "请在 AI Studio Secrets 面板中核对并配置有效的 API Key。";
+        return res.status(status).json({
+          error: "API Key 认证失败 (Permission Denied)",
+          errorCode,
+          errorReason,
+          quotaTip,
+          details: rawMsg
+        });
+      }
+
+      res.status(status).json({
+        error: "文本校正失败",
+        errorCode,
+        errorReason,
+        quotaTip,
+        details: rawMsg,
       });
     }
   });
 
   // Catch-all for missing API routes (MUST be before Vite/Static)
   app.all("/api/*", (req, res) => {
-    console.log(`[404] API route not found: ${req.method} ${req.path}`);
-    res.status(404).json({ error: "API route not found" });
+    console.log(`[404] API route not found: ${req.method} ${req.originalUrl}`);
+    res.status(404).json({ error: `API route not found: ${req.method} ${req.originalUrl}` });
   });
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    const isHttps = process.env.APP_URL?.startsWith("https") ?? false;
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { 
+        middlewareMode: true,
+        watch: null, // Disables file watching to prevent flickering during edits
+        hmr: { 
+          server,
+          clientPort: isHttps ? 443 : PORT
+        }
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -573,21 +585,23 @@ async function startServer() {
     const distPath = path.resolve(__dirname, "dist");
     app.use(express.static(distPath));
     
-    // SPA fallback for production (rate limited to resolve CodeQL js/missing-rate-limiting)
-    app.get("*", generalLimiter, (req, res, next) => {
+    // SPA fallback for production
+    app.get("*", (req, res, next) => {
       if (req.url.startsWith("/api/")) return next();
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
-  // Error handler: never leak stack traces to untrusted clients
+  // Error handler: ensure JSON response for all API requests
   app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
     console.error("Express error:", err);
     if (res.headersSent) {
       return next(err);
     }
-    // Ensure we always return JSON for API errors
-    if (req.url.startsWith("/api/") || req.headers.accept?.includes("application/json")) {
+    const isApi = (req.originalUrl && req.originalUrl.startsWith("/api/")) || 
+                  (req.url && req.url.startsWith("/api/")) || 
+                  req.headers.accept?.includes("application/json");
+    if (isApi) {
       return res.status(err.status || 500).json({ 
         error: err.message || "Internal Server Error"
       });
@@ -595,11 +609,11 @@ async function startServer() {
     res.status(err.status || 500).send("Internal Server Error");
   });
 
-  const server = app.listen(PORT, "0.0.0.0", () => {
+  server.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
   });
 
-  // Set timeout for long-running transcription tasks
+  // Increase timeout for long-running transcription tasks
   server.timeout = 600000; // 10 minutes
 }
 

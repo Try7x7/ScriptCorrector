@@ -1,13 +1,18 @@
 // @vitest-environment jsdom
 import React from "react";
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { QuotaAlert } from "../src/components/QuotaAlert";
 import { TranscriptionPanel } from "../src/components/TranscriptionPanel";
 import { ScriptPanel } from "../src/components/ScriptPanel";
 import { SubtitleSettingsPanel } from "../src/components/SubtitleSettingsPanel";
+import { ResultsPanel } from "../src/components/ResultsPanel";
+import { Header } from "../src/components/Header";
 
 describe("Frontend Component Interactions & User Events (前端组件交互与用户点击事件测试)", () => {
+  afterEach(() => {
+    cleanup();
+  });
   it("Case 2.1: QuotaAlert renders error code badge and fires onRetry and onClose callbacks", () => {
     const handleClose = vi.fn();
     const handleRetry = vi.fn();
@@ -149,4 +154,196 @@ describe("Frontend Component Interactions & User Events (前端组件交互与�
     expect(setVisualOptStart).toHaveBeenCalledWith(20);
     expect(setVisualOptEnd).toHaveBeenCalledWith(24);
   });
+
+  it("Case 2.5: ResultsPanel displays tips bubble, supports manual editing of Text C, and calls onReformatLines and onRestoreGeminiResult", () => {
+    const handleReformat = vi.fn();
+    const handleRestore = vi.fn();
+    const handleTextCChange = vi.fn();
+    const sampleTextC = "Primera línea de prueba.\nSegunda línea de prueba.";
+
+    render(
+      <ResultsPanel
+        selectedLanguage="es"
+        textA="Texto A de prueba"
+        onTextAChange={vi.fn()}
+        textC={sampleTextC}
+        onTextCChange={handleTextCChange}
+        canRestoreGemini={true}
+        onRestoreGeminiResult={handleRestore}
+        diffText="Diferencia reportada"
+        isTranscribing={false}
+        isCorrecting={false}
+        maxLineLength={25}
+        minLineLength={12}
+        enableVisualOptimization={true}
+        visualOptStart={20}
+        visualOptEnd={24}
+        onReformatLines={handleReformat}
+        onExportSrt={vi.fn()}
+        onExportTxt={vi.fn()}
+        diffLanguage="es"
+        onDiffLanguageChange={vi.fn()}
+      />
+    );
+
+    // Verify tips bubble notification is displayed
+    expect(screen.getByText(/💡 提示说明：/)).toBeDefined();
+    expect(screen.getByText(/手动修改校对文字/)).toBeDefined();
+
+    // Verify reformat lines button is present and triggers onReformatLines
+    const reformatBtn = screen.getByTitle("按当前设定的字符上限与语法规则重新精准排版断行");
+    expect(reformatBtn).toBeDefined();
+    fireEvent.click(reformatBtn);
+    expect(handleReformat).toHaveBeenCalledTimes(1);
+
+    // Verify restore Gemini button is present, enabled, and triggers onRestoreGeminiResult
+    const restoreBtn = screen.getByTitle("恢复为 Gemini 原始校对结果");
+    expect(restoreBtn).toBeDefined();
+    expect(restoreBtn.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(restoreBtn);
+    expect(handleRestore).toHaveBeenCalledTimes(1);
+
+    // Click "手动编辑文本" to switch to textarea edit mode
+    const editModeBtn = screen.getByTitle("切换编辑/统计模式");
+    expect(editModeBtn).toBeDefined();
+    fireEvent.click(editModeBtn);
+
+    // Textarea should now be visible and can be typed into
+    const textarea = screen.getByPlaceholderText("在此直接手动编辑或修改校对结果文本...");
+    expect(textarea).toBeDefined();
+    fireEvent.change(textarea, { target: { value: "Nuevo texto C modificado" } });
+    expect(handleTextCChange).toHaveBeenCalledWith("Nuevo texto C modificado");
+  });
+
+  it("Case 2.6: ResultsPanel supports editing Text A directly when onTextAChange is provided", () => {
+    const handleTextAChange = vi.fn();
+
+    render(
+      <ResultsPanel
+        selectedLanguage="es"
+        textA="Transcripción inicial"
+        onTextAChange={handleTextAChange}
+        textC=""
+        diffText=""
+        isTranscribing={false}
+        isCorrecting={false}
+        maxLineLength={25}
+        minLineLength={12}
+        enableVisualOptimization={true}
+        visualOptStart={20}
+        visualOptEnd={24}
+        onReformatLines={vi.fn()}
+        onExportSrt={vi.fn()}
+        onExportTxt={vi.fn()}
+        diffLanguage="es"
+        onDiffLanguageChange={vi.fn()}
+      />
+    );
+
+    // Find textarea for Text A
+    const textareaA = screen.getByPlaceholderText(/音频识别完成后将在此显示结果/);
+    expect(textareaA).toBeDefined();
+    fireEvent.change(textareaA, { target: { value: "Nueva transcripción pegada manualmente" } });
+    expect(handleTextAChange).toHaveBeenCalledWith("Nueva transcripción pegada manualmente");
+
+    // Clear Text A button should work
+    const clearBtnA = screen.getByTitle("清空识别结果");
+    expect(clearBtnA).toBeDefined();
+    fireEvent.click(clearBtnA);
+    expect(handleTextAChange).toHaveBeenCalledWith("");
+  });
+
+  it("Case 2.7: ResultsPanel handles SRT and TXT export with estimation notice when hasGladiaTimestamps is false", () => {
+    const handleExportSrt = vi.fn();
+    const handleExportTxt = vi.fn();
+
+    const { rerender } = render(
+      <ResultsPanel
+        selectedLanguage="es"
+        textA="Texto A"
+        textC="Primera línea de subtítulo\nSegunda línea de subtítulo"
+        diffText=""
+        isTranscribing={false}
+        isCorrecting={false}
+        maxLineLength={25}
+        minLineLength={12}
+        enableVisualOptimization={true}
+        visualOptStart={20}
+        visualOptEnd={24}
+        hasGladiaTimestamps={false}
+        onReformatLines={vi.fn()}
+        onExportSrt={handleExportSrt}
+        onExportTxt={handleExportTxt}
+        diffLanguage="es"
+        onDiffLanguageChange={vi.fn()}
+      />
+    );
+
+    // 1. Without Gladia timestamps, SRT button is enabled with "估算时间" badge and title
+    const srtBtnEstimated = screen.getByTitle("导出为 SRT 字幕文件（无音频，按字数估算时间轴）");
+    expect(srtBtnEstimated).toBeDefined();
+    expect(srtBtnEstimated.hasAttribute("disabled")).toBe(false);
+    expect(screen.getByText("估算时间")).toBeDefined();
+
+    fireEvent.click(srtBtnEstimated);
+    expect(handleExportSrt).toHaveBeenCalledTimes(1);
+
+    // 2. TXT button is always available when textC is present
+    const txtBtn = screen.getByTitle("导出为 TXT 纯文本文档");
+    expect(txtBtn).toBeDefined();
+    expect(txtBtn.hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(txtBtn);
+    expect(handleExportTxt).toHaveBeenCalledTimes(1);
+
+    // 3. When hasGladiaTimestamps is true, badge disappears and title reflects real audio timestamps
+    rerender(
+      <ResultsPanel
+        selectedLanguage="es"
+        textA="Texto A"
+        textC="Primera línea de subtítulo\nSegunda línea de subtítulo"
+        diffText=""
+        isTranscribing={false}
+        isCorrecting={false}
+        maxLineLength={25}
+        minLineLength={12}
+        enableVisualOptimization={true}
+        visualOptStart={20}
+        visualOptEnd={24}
+        hasGladiaTimestamps={true}
+        onReformatLines={vi.fn()}
+        onExportSrt={handleExportSrt}
+        onExportTxt={handleExportTxt}
+        diffLanguage="es"
+        onDiffLanguageChange={vi.fn()}
+      />
+    );
+
+    const srtBtnReal = screen.getByTitle("导出为 SRT 字幕文件（包含真实录音时间轴）");
+    expect(srtBtnReal).toBeDefined();
+    expect(screen.queryByText("估算时间")).toBeNull();
+  });
+
+  it("Case 2.8: Header displays v1.2 badge and links directly to GitHub CHANGELOG.md", () => {
+    render(<Header selectedLanguage="es" />);
+
+    // Verify v1.2 version badge
+    const badge = screen.getByText("v1.2");
+    expect(badge).toBeDefined();
+    expect(badge.closest("a")?.getAttribute("href")).toBe(
+      "https://github.com/Try7x7/ScriptCorrector/blob/main/CHANGELOG.md"
+    );
+
+    // Verify changelog external link button
+    const changelogLink = screen.getByTitle("查看 GitHub 仓库更新日志");
+    expect(changelogLink).toBeDefined();
+    expect(changelogLink.getAttribute("href")).toBe(
+      "https://github.com/Try7x7/ScriptCorrector/blob/main/CHANGELOG.md"
+    );
+    expect(changelogLink.getAttribute("target")).toBe("_blank");
+    expect(changelogLink.getAttribute("rel")).toContain("noopener");
+  });
 });
+
+
+

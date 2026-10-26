@@ -2,6 +2,7 @@ import React from 'react';
 import { AlertCircle, ExternalLink, RefreshCw } from 'lucide-react';
 import { ApiErrorInfo } from '../types';
 import { AI_STUDIO_QUOTA_URL } from '../config/constants';
+import { Tooltip } from './Tooltip';
 
 interface QuotaAlertProps {
   error: string | null;
@@ -41,13 +42,16 @@ export const QuotaAlert: React.FC<QuotaAlertProps> = ({
             </p>
           </div>
         </div>
-        <button
-          onClick={onClose}
-          className="text-zinc-400 hover:text-zinc-700 p-1.5 rounded-lg text-sm transition-colors cursor-pointer"
-          title="关闭提示"
-        >
-          ✕
-        </button>
+        <Tooltip content="关闭当前错误提示">
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-zinc-400 hover:text-zinc-700 p-1.5 rounded-lg text-sm transition-colors cursor-pointer"
+            title="关闭提示"
+          >
+            ✕
+          </button>
+        </Tooltip>
       </div>
 
       {errorInfo?.errorReason && (
@@ -81,14 +85,17 @@ export const QuotaAlert: React.FC<QuotaAlertProps> = ({
                 <ExternalLink size={13} />
               </a>
               {canRetry && onRetry && (
-                <button
-                  onClick={onRetry}
-                  disabled={isRetrying}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-zinc-100 text-zinc-800 font-medium text-xs border border-zinc-300 transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
-                >
-                  <RefreshCw size={13} className={isRetrying ? "animate-spin" : ""} />
-                  <span>手动重试校对 (不重复语音识别)</span>
-                </button>
+                <Tooltip content="刚才只是向 AI 请求校对时网络闪断或服务器拥挤。录音已经听写好了，点这里可以直接重新校对，不用再花时间重新上传录音。">
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    disabled={isRetrying}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-zinc-100 text-zinc-800 font-medium text-xs border border-zinc-300 transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
+                  >
+                    <RefreshCw size={13} className={isRetrying ? "animate-spin" : ""} />
+                    <span>手动重试校对 (不重复语音识别)</span>
+                  </button>
+                </Tooltip>
               )}
             </div>
           </div>

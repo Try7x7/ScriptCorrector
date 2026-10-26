@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { FileText, Copy, CheckCircle2, Trash2 } from 'lucide-react';
 import { SupportedLanguage } from '../types';
+import { Tooltip } from './Tooltip';
 
 interface ScriptPanelProps {
   textB: string;
@@ -46,23 +47,30 @@ export const ScriptPanel: React.FC<ScriptPanelProps> = ({
         </h2>
         <div className="flex items-center gap-2">
           {textB.trim() && (
-            <button
-              onClick={() => onTextBChange('')}
-              className="flex items-center gap-1 px-2.5 py-1 text-xs text-zinc-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-              title="清空文本"
-            >
-              <Trash2 size={14} />
-              <span>清空</span>
-            </button>
+            <Tooltip content="一键清空输入框里的所有参考文字稿，方便您直接粘贴新的一篇文稿进来。">
+              <button
+                type="button"
+                onClick={() => onTextBChange('')}
+                className="flex items-center gap-1 px-2.5 py-1 text-xs text-zinc-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                title="清空文本"
+              >
+                <Trash2 size={14} />
+                <span>清空</span>
+              </button>
+            </Tooltip>
           )}
-          <button
-            onClick={handleCopy}
-            disabled={!textB.trim()}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-50 hover:bg-zinc-100 border border-zinc-200 rounded-lg text-xs font-medium text-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer shadow-xs"
-          >
-            {isCopied ? <CheckCircle2 size={14} className="text-emerald-500" /> : <Copy size={14} />}
-            <span>{isCopied ? '已复制' : '复制'}</span>
-          </button>
+          <Tooltip content="一键复制参考文字稿全文到剪贴板，方便在别处备份或对比。" align="right">
+            <button
+              type="button"
+              onClick={handleCopy}
+              disabled={!textB.trim()}
+              title="复制文字稿"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-50 hover:bg-zinc-100 border border-zinc-200 rounded-lg text-xs font-medium text-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer shadow-xs"
+            >
+              {isCopied ? <CheckCircle2 size={14} className="text-emerald-500" /> : <Copy size={14} />}
+              <span>{isCopied ? '已复制' : '复制'}</span>
+            </button>
+          </Tooltip>
         </div>
       </div>
 

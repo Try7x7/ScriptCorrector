@@ -18,3 +18,24 @@ export interface PromptFormattingOptions {
   visualOptStart: number;
   visualOptEnd: number;
 }
+
+export interface WordTimestamp {
+  word: string;
+  start: number;
+  end: number;
+  confidence?: number;
+}
+
+export interface Utterance {
+  start: number;
+  end: number;
+  text: string;
+  words?: WordTimestamp[];
+}
+
+export interface Cue {
+  index: number;
+  start: number;
+  end: number;
+  text: string;
+}

@@ -97,4 +97,18 @@ describe("End-to-End Pipeline Integration (端到端全流程模拟串联测试)
     expect(srt).toContain("1\n");
     expect(srt).toContain("El Señor es mi pastor,");
   });
+
+  it("Case 2.3: Text-Only Pipeline when only Text A or only Text B is provided", () => {
+    // When only Text A has text (e.g. transcribed from external source or edited by user)
+    const textAOnly = "dios todopoderoso y eterno que nos bendice en cristo jesus";
+    const promptWithTextA = getCorrectionPrompt('es', textAOnly, textAOnly, 'es');
+    expect(promptWithTextA).toContain(textAOnly);
+    expect(promptWithTextA).toContain("<TEXT_A_ASR>");
+
+    // When only Text B has text (reference text proofreading)
+    const textBOnly = "Dios todopoderoso y eterno que nos bendice en Cristo Jesús.";
+    const promptWithTextB = getCorrectionPrompt('es', textBOnly, textBOnly, 'es');
+    expect(promptWithTextB).toContain(textBOnly);
+    expect(promptWithTextB).toContain("<TEXT_B_REFERENCE_SCRIPT>");
+  });
 });

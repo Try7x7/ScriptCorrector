@@ -1,7 +1,8 @@
 import React, { useRef, useState } from 'react';
-import { FileAudio, Upload, Globe } from 'lucide-react';
+import { FileAudio, Upload, Globe, Trash2 } from 'lucide-react';
 import { SupportedLanguage } from '../types';
 import { LANGUAGE_OPTIONS } from '../config/constants';
+import { Tooltip } from './Tooltip';
 
 interface TranscriptionPanelProps {
   selectedLanguage: SupportedLanguage;
@@ -69,19 +70,25 @@ export const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
         </label>
         <div className="grid grid-cols-3 gap-2">
           {LANGUAGE_OPTIONS.map((lang) => (
-            <button
+            <Tooltip
               key={lang.id}
-              type="button"
-              onClick={() => onLanguageChange(lang.id)}
-              className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-medium transition-all cursor-pointer ${
-                selectedLanguage === lang.id
-                  ? 'bg-indigo-50 border-indigo-500 text-indigo-700 shadow-xs font-semibold'
-                  : 'bg-zinc-50/60 border-zinc-200 text-zinc-600 hover:bg-zinc-100'
-              }`}
+              content={`告诉系统录音里讲的是${lang.label.split(' ')[0]}，系统会按照该语言的发音习惯进行听写，并按其专属规则帮您校对错字和断句。`}
+              className="w-full"
             >
-              <span className="text-lg mb-1">{lang.flag}</span>
-              <span className="truncate max-w-full">{lang.label.split(' ')[0]}</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => onLanguageChange(lang.id)}
+                title={`切换为 ${lang.label}`}
+                className={`w-full flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-medium transition-all cursor-pointer ${
+                  selectedLanguage === lang.id
+                    ? 'bg-indigo-50 border-indigo-500 text-indigo-700 shadow-xs font-semibold'
+                    : 'bg-zinc-50/60 border-zinc-200 text-zinc-600 hover:bg-zinc-100'
+                }`}
+              >
+                <span className="text-lg mb-1">{lang.flag}</span>
+                <span className="truncate max-w-full">{lang.label.split(' ')[0]}</span>
+              </button>
+            </Tooltip>
           ))}
         </div>
       </div>
@@ -139,16 +146,36 @@ export const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
             <p className="text-xs text-emerald-700 mt-1">
               {(audioFile.size / 1024 / 1024).toFixed(2)} MB • 已准备就绪
             </p>
-            <span className="mt-3 text-xs text-zinc-500 underline hover:text-zinc-700">
-              点击更换音频文件
-            </span>
+            <div className="mt-3 flex items-center gap-3">
+              <Tooltip content="从电脑中重新选择其他录音文件进行替换。">
+                <span className="text-xs text-zinc-500 underline hover:text-zinc-700 cursor-pointer">
+                  点击更换音频文件
+                </span>
+              </Tooltip>
+              <Tooltip content="移除当前选中的录音文件，恢复为空白状态。">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onFileSelect(null);
+                  }}
+                  className="inline-flex items-center gap-1 text-xs text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-2 py-0.5 rounded transition-colors"
+                  title="移除音频"
+                >
+                  <Trash2 size={12} />
+                  <span>清除</span>
+                </button>
+              </Tooltip>
+            </div>
           </div>
         ) : (
-          <div className="py-2">
-            <Upload className="mx-auto h-10 w-10 text-zinc-400 mb-3" />
-            <p className="text-sm font-medium text-zinc-700">点击上传音频文件 或 拖拽至此处</p>
-            <p className="text-xs text-zinc-500 mt-1">支持 MP3, WAV, M4A, AAC, OGG 等格式 (上限 50MB)</p>
-          </div>
+          <Tooltip content="点击选择电脑里的录音文件，或者直接把录音文件拖进这个框里（支持 MP3、WAV、M4A 等格式，文件大小在 50MB 以内）。">
+            <div className="py-2">
+              <Upload className="mx-auto h-10 w-10 text-zinc-400 mb-3" />
+              <p className="text-sm font-medium text-zinc-700">点击上传音频文件 或 拖拽至此处</p>
+              <p className="text-xs text-zinc-500 mt-1">支持 MP3, WAV, M4A, AAC, OGG 等格式 (上限 50MB)</p>
+            </div>
+          </Tooltip>
         )}
       </div>
     </section>

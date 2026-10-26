@@ -1,360 +1,52 @@
-import React, { useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import React from 'react';
+import { Loader2, XCircle } from 'lucide-react';
 import { Header } from './components/Header';
 import { QuotaAlert } from './components/QuotaAlert';
 import { TranscriptionPanel } from './components/TranscriptionPanel';
 import { ScriptPanel } from './components/ScriptPanel';
 import { SubtitleSettingsPanel } from './components/SubtitleSettingsPanel';
 import { ResultsPanel } from './components/ResultsPanel';
-import { getCorrectionPrompt } from './config/prompts';
-import { DEFAULT_GEMINI_MODEL, SUBTITLE_DEFAULTS } from './config/constants';
-import { SupportedLanguage, ReportLanguage, ApiErrorInfo } from './types';
-import { formatSubtitles, downloadSrtFile, downloadTxtFile } from './utils/subtitleFormatter';
+import { Tooltip } from './components/Tooltip';
+import { useCorrectionPipeline } from './hooks/useCorrectionPipeline';
 
 export default function App() {
-  const [selectedLanguage, setSelectedLanguage] = useState<SupportedLanguage>('es');
-  const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [audioDuration, setAudioDuration] = useState<number | null>(null);
-  const [textB, setTextB] = useState('');
-  const [textA, setTextA] = useState('');
-  const [textC, setTextC] = useState('');
-  const [diffText, setDiffText] = useState('');
-  const [gladiaApiKeyInput, setGladiaApiKeyInput] = useState('');
-  
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const [isCorrecting, setIsCorrecting] = useState(false);
-  const [isWakingUp, setIsWakingUp] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [errorInfo, setErrorInfo] = useState<ApiErrorInfo | null>(null);
-  
-  // Output Settings
-  const [enableLineBreaks, setEnableLineBreaks] = useState(SUBTITLE_DEFAULTS.enableLineBreaks);
-  const [maxLineLength, setMaxLineLength] = useState(SUBTITLE_DEFAULTS.maxLineLength);
-  const [minLineLength, setMinLineLength] = useState(SUBTITLE_DEFAULTS.minLineLength);
-  const [enableVisualOptimization, setEnableVisualOptimization] = useState(SUBTITLE_DEFAULTS.enableVisualOptimization);
-  const [visualOptStart, setVisualOptStart] = useState(SUBTITLE_DEFAULTS.visualOptStart);
-  const [visualOptEnd, setVisualOptEnd] = useState(SUBTITLE_DEFAULTS.visualOptEnd);
-  
-  const [diffLanguage, setDiffLanguage] = useState<ReportLanguage>('es');
+  const {
+    selectedLanguage,
+    setSelectedLanguage,
+    gladiaApiKeyInput,
+    setGladiaApiKeyInput,
+    audioFile,
+    handleAudioSelect,
+    textB,
+    setTextB,
+    textA,
+    setTextA,
+    textC,
+    setTextC,
+    canRestoreGemini,
+    handleRestoreGeminiResult,
+    diffText,
+    diffLanguage,
+    setDiffLanguage,
+    subtitleOptions,
+    setSubtitleOptions,
+    transcriptionUtterances,
+    isTranscribing,
+    isCorrecting,
+    isWakingUp,
+    error,
+    setError,
+    errorInfo,
+    setErrorInfo,
+    cancelOperation,
+    handleProcess,
+    handleProcessGeminiOnly,
+    handleReformatLines,
+    handleExportSrt,
+    handleExportTxt,
+  } = useCorrectionPipeline();
 
-  const handleAudioSelect = (file: File | null) => {
-    setAudioFile(file);
-    if (file) {
-      const audio = new Audio();
-      audio.src = URL.createObjectURL(file);
-      audio.onloadedmetadata = () => {
-        setAudioDuration(audio.duration);
-        URL.revokeObjectURL(audio.src);
-      };
-    } else {
-      setAudioDuration(null);
-    }
-  };
-
-  const handleProcess = async () => {
-    if (!audioFile) {
-      setError('请上传音频文件 (Please upload an audio file)');
-      return;
-    }
-    if (!textB.trim()) {
-      setError('请输入文字稿 (Please enter the reference text)');
-      return;
-    }
-
-    setError(null);
-    setErrorInfo(null);
-    setTextA('');
-    setTextC('');
-    setDiffText('');
-
-    // Step 0: Wake up server if needed and verify it returns JSON status: ok
-    setIsWakingUp(true);
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const healthCheck = await fetch('/api/health');
-        const text = await healthCheck.text();
-        if (healthCheck.ok && text.includes('"ok"')) {
-          break;
-        }
-      } catch (e) {
-        console.log(`Server wake-up check attempt ${attempt + 1}...`);
-      }
-      await new Promise(r => setTimeout(r, 1200));
-    }
-    setIsWakingUp(false);
-
-    // Step 1: Transcribe Audio (Text A)
-    setIsTranscribing(true);
-    let transcribedText = '';
-    try {
-      const formData = new FormData();
-      if (gladiaApiKeyInput.trim()) {
-        formData.append('gladiaApiKey', gladiaApiKeyInput.trim());
-      }
-      formData.append('audio', audioFile);
-      formData.append('language', selectedLanguage);
-
-      const response = await fetch('/api/transcribe', {
-        method: 'POST',
-        headers: {
-          'X-Gladia-API-Key': gladiaApiKeyInput.trim(),
-          'X-Target-Language': selectedLanguage,
-        },
-        body: formData,
-      });
-
-      const rawResponseText = await response.text();
-      const rawLower = rawResponseText.trim().toLowerCase();
-      const isHtmlResponse = rawLower.startsWith('<!doctype') || 
-                             rawLower.startsWith('<html') ||
-                             rawLower.includes('starting server') ||
-                             rawLower.includes('please wait while your application starts');
-
-      if (isHtmlResponse) {
-        const isStartingServer = rawLower.includes('starting server') || 
-                                 rawLower.includes('please wait while your application starts') ||
-                                 response.status === 200;
-        
-        const startingServerTip = '服务容器正在唤醒中 (Starting Server)：本次未消耗任何额度，容器就绪通常只需 2~3 秒，请稍后直接重试。';
-        const generalHtmlTip = `服务器连接异常 (收到网关 HTML 页面，HTTP ${response.status})。服务可能正在冷启动，本次未消耗任何额度，请稍等几秒重试。`;
-        const msg = isStartingServer ? startingServerTip : generalHtmlTip;
-
-        setErrorInfo({
-          message: msg,
-          errorCode: isStartingServer ? 'CONTAINER_STARTING (HTTP 200)' : `GATEWAY_HTML (HTTP ${response.status})`,
-          errorReason: isStartingServer 
-            ? '服务容器正在冷启动或重启过渡期（收到网关 Starting Server 页面）。请求未触达转录后台，本次调用未消耗任何外部额度。'
-            : '网关或代理返回了过渡 HTML 页面，请求尚未到达后台。',
-          quotaTip: '💡 本次操作完全未扣减任何额度（消耗为 0）。容器就绪通常只需 2~3 秒，请稍后直接重新提交。'
-        });
-        setError(msg);
-        throw new Error(msg);
-      }
-
-      let responseData: any = null;
-      try {
-        responseData = JSON.parse(rawResponseText);
-      } catch (parseErr) {
-        throw new Error(`服务器返回了非 JSON 格式响应 (HTTP ${response.status}): ${rawResponseText.substring(0, 150)}`);
-      }
-
-      if (!response.ok) {
-        let errorMsg = responseData.error || 'Transcription failed';
-        if (responseData.details) {
-          errorMsg += ` (${typeof responseData.details === 'object' ? JSON.stringify(responseData.details) : responseData.details})`;
-        }
-        if (responseData.customKeyUsed) {
-          errorMsg += ' [使用自定义 API Key]';
-        }
-        throw new Error(errorMsg);
-      }
-
-      transcribedText = responseData.text || '';
-      setTextA(transcribedText);
-      setIsTranscribing(false);
-
-      // Step 2: Correct Text (Text C) using Gemini via Backend
-      await runGemini(transcribedText);
-    } catch (err: any) {
-      console.error(err);
-      setError(`语音识别失败: ${err.message}`);
-      setIsTranscribing(false);
-    }
-  };
-
-  const runGemini = async (transcribedText: string) => {
-    setIsCorrecting(true);
-    setError(null);
-    try {
-      const prompt = getCorrectionPrompt(selectedLanguage, transcribedText, textB, diffLanguage, {
-        enableLineBreaks,
-        maxLineLength,
-        minLineLength,
-        enableVisualOptimization,
-        visualOptStart,
-        visualOptEnd,
-      });
-
-      const response = await fetch('/api/correct', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          prompt,
-          model: DEFAULT_GEMINI_MODEL,
-        }),
-      });
-
-      const rawResponseText = await response.text();
-      const rawLower = rawResponseText.trim().toLowerCase();
-      const isHtmlResponse = rawLower.startsWith('<!doctype') || 
-                             rawLower.startsWith('<html') ||
-                             rawLower.includes('starting server') ||
-                             rawLower.includes('please wait while your application starts');
-
-      if (isHtmlResponse) {
-        const isStartingServer = rawLower.includes('starting server') || 
-                                 rawLower.includes('please wait while your application starts') ||
-                                 response.status === 200;
-
-        const startingServerTip = '服务容器正在唤醒中 (Starting Server)：本次未消耗任何额度，容器就绪通常只需 2~3 秒，请稍后直接重试。';
-        const generalHtmlTip = `服务器响应异常 (收到网关 HTML 页面，HTTP ${response.status})。服务可能正在冷启动，本次未消耗任何额度，请稍等几秒重试。`;
-        const msg = isStartingServer ? startingServerTip : generalHtmlTip;
-
-        const startingErrInfo: ApiErrorInfo = {
-          message: msg,
-          errorCode: isStartingServer ? 'CONTAINER_STARTING (HTTP 200)' : `GATEWAY_HTML (HTTP ${response.status})`,
-          errorReason: isStartingServer 
-            ? '服务容器正在冷启动或重启过渡期（收到网关 Starting Server 页面）。请求未触达 Gemini 核心服务，本次调用消耗的配额为 0！'
-            : '网关或代理返回了过渡 HTML 页面，请求尚未到达模型后台。',
-          quotaTip: '💡 本次操作完全未扣减任何 Gemini API 额度（消耗为 0）。容器就绪通常只需 2~3 秒，请稍后直接点击下方「手动重试校对」继续。',
-          model: DEFAULT_GEMINI_MODEL
-        };
-        setErrorInfo(startingErrInfo);
-        setError(msg);
-        throw new Error(msg);
-      }
-
-      let responseJson: any = null;
-      try {
-        responseJson = JSON.parse(rawResponseText);
-      } catch (parseErr) {
-        throw new Error(`服务器返回了非 JSON 格式响应 (HTTP ${response.status}): ${rawResponseText.substring(0, 120)}`);
-      }
-
-      if (!response.ok) {
-        const errInfo: ApiErrorInfo = {
-          message: responseJson.error || `校正失败 (HTTP ${response.status})`,
-          errorCode: responseJson.errorCode || `HTTP ${response.status}`,
-          errorReason: responseJson.errorReason || "服务返回异常，可能受配额限制或网络拥塞影响。",
-          quotaTip: responseJson.quotaTip || "免费层配额上限通常为 5 RPM / 20 RPD。系统已将后台重试设置为 0 次以节约用量。请前往 Google AI Studio 检查用量。",
-          details: typeof responseJson.details === 'object' ? JSON.stringify(responseJson.details) : responseJson.details
-        };
-        setErrorInfo(errInfo);
-        setError(errInfo.message);
-        throw new Error(errInfo.message);
-      }
-
-      const responseText = responseJson.text || '{}';
-      
-      // Robust JSON parser for Gemini output: strips markdown code fences and extracts JSON object
-      try {
-        let cleanText = responseText.trim();
-        if (cleanText.startsWith('```')) {
-          cleanText = cleanText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-        }
-        
-        let result: any = null;
-        try {
-          result = JSON.parse(cleanText);
-        } catch (firstErr) {
-          const match = cleanText.match(/\{[\s\S]*\}/);
-          if (match) {
-            result = JSON.parse(match[0]);
-          } else {
-            throw firstErr;
-          }
-        }
-
-        let corrected = result.correctedText || '';
-        if (enableLineBreaks && corrected) {
-          corrected = formatSubtitles(corrected, {
-            maxLen: maxLineLength,
-            minLen: minLineLength,
-            enableVisualOpt: enableVisualOptimization,
-            visualOptStart,
-            visualOptEnd
-          });
-        }
-        setTextC(corrected);
-        setDiffText(result.differences || '');
-      } catch (e) {
-        console.error("JSON Parse Error", e);
-        let corrected = responseText;
-        if (enableLineBreaks && corrected) {
-          corrected = formatSubtitles(corrected, {
-            maxLen: maxLineLength,
-            minLen: minLineLength,
-            enableVisualOpt: enableVisualOptimization,
-            visualOptStart,
-            visualOptEnd
-          });
-        }
-        setTextC(corrected);
-        setDiffText("差异报告解析失败，已直接呈现校正文本。请检查内容格式。");
-      }
-    } catch (err: any) {
-      console.error(err);
-      setErrorInfo(prev => prev || {
-        message: err.message || "请求失败",
-        errorCode: 'REQUEST_FAILED',
-        errorReason: err.message?.includes('HTML') 
-          ? '云服务代理返回了 HTML 页面（可能由于冷启动或请求超时）。'
-          : '网络通信中断或服务未响应。',
-        quotaTip: '后台重试已设为 0 次以保护您的配额。请前往 Google AI Studio 查看当前使用量状态。'
-      });
-      setError(`文本校正失败: ${err.message}`);
-    }
-    setIsCorrecting(false);
-  };
-
-  const handleProcessGeminiOnly = async () => {
-    if (!textB.trim()) {
-      setError('请输入文字稿 (Please enter the reference text)');
-      return;
-    }
-
-    setError(null);
-    setErrorInfo(null);
-    setTextC('');
-    setDiffText('');
-
-    // Step 0: Wake up server if needed and verify it returns JSON status: ok
-    setIsWakingUp(true);
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const healthCheck = await fetch('/api/health');
-        const text = await healthCheck.text();
-        if (healthCheck.ok && text.includes('"ok"')) {
-          break;
-        }
-      } catch (e) {
-        console.log(`Server wake-up check attempt ${attempt + 1}...`);
-      }
-      await new Promise(r => setTimeout(r, 1200));
-    }
-    setIsWakingUp(false);
-
-    // If we have transcribed text, use it. Otherwise, use textB as the source text.
-    const textToProcess = textA.trim() ? textA : textB;
-    await runGemini(textToProcess);
-  };
-
-  const handleReformatLines = () => {
-    if (textC) {
-      const formatted = formatSubtitles(textC, {
-        maxLen: maxLineLength,
-        minLen: minLineLength,
-        enableVisualOpt: enableVisualOptimization,
-        visualOptStart,
-        visualOptEnd
-      });
-      setTextC(formatted);
-    }
-  };
-
-  const handleExportSrt = () => {
-    if (!textC.trim()) return;
-    const baseName = audioFile ? audioFile.name.replace(/\.[^/.]+$/, '') : 'subtitles';
-    downloadSrtFile(textC, `${baseName}_${selectedLanguage}.srt`, audioDuration || undefined);
-  };
-
-  const handleExportTxt = () => {
-    if (!textC.trim()) return;
-    const baseName = audioFile ? audioFile.name.replace(/\.[^/.]+$/, '') : 'subtitles';
-    downloadTxtFile(textC, `${baseName}_${selectedLanguage}.txt`, audioDuration || undefined);
-  };
+  const isBusy = isTranscribing || isCorrecting || isWakingUp;
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 font-sans">
@@ -383,11 +75,11 @@ export default function App() {
         <QuotaAlert
           error={error}
           errorInfo={errorInfo}
-          onClose={() => { setError(null); setErrorInfo(null); }}
-          onRetry={() => {
-            const textToProcess = textA.trim() ? textA : textB;
-            runGemini(textToProcess);
+          onClose={() => {
+            setError(null);
+            setErrorInfo(null);
           }}
+          onRetry={handleProcessGeminiOnly}
           isRetrying={isCorrecting}
           canRetry={Boolean(textA || textB)}
         />
@@ -411,53 +103,89 @@ export default function App() {
             />
 
             <SubtitleSettingsPanel
-              enableLineBreaks={enableLineBreaks}
-              onEnableLineBreaksChange={setEnableLineBreaks}
-              maxLineLength={maxLineLength}
-              onMaxLineLengthChange={setMaxLineLength}
-              minLineLength={minLineLength}
-              onMinLineLengthChange={setMinLineLength}
-              enableVisualOptimization={enableVisualOptimization}
-              onEnableVisualOptimizationChange={setEnableVisualOptimization}
-              visualOptStart={visualOptStart}
-              onVisualOptStartChange={setVisualOptStart}
-              visualOptEnd={visualOptEnd}
-              onVisualOptEndChange={setVisualOptEnd}
+              enableLineBreaks={subtitleOptions.enableLineBreaks}
+              onEnableLineBreaksChange={(val) => setSubtitleOptions(prev => ({ ...prev, enableLineBreaks: val }))}
+              maxLineLength={subtitleOptions.maxLineLength}
+              onMaxLineLengthChange={(val) => setSubtitleOptions(prev => ({ ...prev, maxLineLength: val }))}
+              minLineLength={subtitleOptions.minLineLength}
+              onMinLineLengthChange={(val) => setSubtitleOptions(prev => ({ ...prev, minLineLength: val }))}
+              enableVisualOptimization={subtitleOptions.enableVisualOptimization}
+              onEnableVisualOptimizationChange={(val) => setSubtitleOptions(prev => ({ ...prev, enableVisualOptimization: val }))}
+              visualOptStart={subtitleOptions.visualOptStart}
+              onVisualOptStartChange={(val) => setSubtitleOptions(prev => ({ ...prev, visualOptStart: val }))}
+              visualOptEnd={subtitleOptions.visualOptEnd}
+              onVisualOptEndChange={(val) => setSubtitleOptions(prev => ({ ...prev, visualOptEnd: val }))}
             />
 
             <div className="flex flex-col sm:flex-row gap-4">
-              <button
-                onClick={handleProcess}
-                disabled={isTranscribing || isCorrecting || isWakingUp || !audioFile || !textB.trim()}
-                className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl font-medium shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+              <Tooltip 
+                content={
+                  !audioFile 
+                    ? '请先在上方上传一段录音音频（支持 MP3、WAV、M4A 等格式）。' 
+                    : '全自动一站式处理：先听录音听写出文字，再由 AI 对照原稿纠正错字错音，最后自动排成整齐规范的一行行字幕。'
+                }
+                className="flex-1"
               >
-                {(isTranscribing || isWakingUp || (isCorrecting && !textC && !diffText && audioFile)) ? (
-                  <>
-                    <Loader2 className="animate-spin" size={20} />
-                    <span>
-                      {isWakingUp ? '正在连接服务器...' : 
-                       isTranscribing ? '正在识别音频...' : '正在校正文本...'}
-                    </span>
-                  </>
-                ) : (
-                  <span>完整处理 (Audio + Gemini)</span>
-                )}
-              </button>
+                <button
+                  type="button"
+                  onClick={handleProcess}
+                  disabled={isBusy || !audioFile}
+                  title="完整处理 (Audio + Gemini)"
+                  className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-xl font-medium shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  {isBusy && audioFile ? (
+                    <>
+                      <Loader2 className="animate-spin" size={20} />
+                      <span>
+                        {isWakingUp ? '正在连接服务器...' : 
+                         isTranscribing ? '正在识别音频...' : '正在校正文本...'}
+                      </span>
+                    </>
+                  ) : (
+                    <span>完整处理 (Audio + Gemini)</span>
+                  )}
+                </button>
+              </Tooltip>
               
-              <button
-                onClick={handleProcessGeminiOnly}
-                disabled={isTranscribing || isCorrecting || !textB.trim()}
-                className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white rounded-xl font-medium shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+              <Tooltip 
+                content={
+                  !textA.trim() && !textB.trim() 
+                    ? '右侧识别框 (Text A) 或左侧文字稿 (Text B) 只要有一处有文字，就可以直接点这里开始校对。' 
+                    : '不用传音频。直接拿现有的文字让 AI 帮您纠正错别字、理顺标点与专有名词，并把句子整理成长度合适的一行行字幕。'
+                }
+                className="flex-1"
               >
-                {isCorrecting ? (
-                  <>
-                    <Loader2 className="animate-spin" size={20} />
-                    <span>正在校正文本...</span>
-                  </>
-                ) : (
-                  <span>仅运行 Gemini (Text Only)</span>
-                )}
-              </button>
+                <button
+                  type="button"
+                  onClick={handleProcessGeminiOnly}
+                  disabled={isBusy || (!textA.trim() && !textB.trim())}
+                  title="仅运行 Gemini (Text Only)"
+                  className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white rounded-xl font-medium shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  {isCorrecting && !isTranscribing ? (
+                    <>
+                      <Loader2 className="animate-spin" size={20} />
+                      <span>正在校正文本...</span>
+                    </>
+                  ) : (
+                    <span>仅运行 Gemini (Text Only)</span>
+                  )}
+                </button>
+              </Tooltip>
+
+              {isBusy && (
+                <Tooltip content="立即停止当前正在进行的录音上传、语音听写或 AI 校对，不再消耗等待时间。">
+                  <button
+                    type="button"
+                    onClick={cancelOperation}
+                    title="取消正在进行的操作"
+                    className="px-4 py-4 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <XCircle size={18} />
+                    <span>取消</span>
+                  </button>
+                </Tooltip>
+              )}
             </div>
           </div>
 
@@ -465,15 +193,20 @@ export default function App() {
           <ResultsPanel
             selectedLanguage={selectedLanguage}
             textA={textA}
+            onTextAChange={setTextA}
             textC={textC}
+            onTextCChange={setTextC}
+            canRestoreGemini={canRestoreGemini}
+            onRestoreGeminiResult={handleRestoreGeminiResult}
+            hasGladiaTimestamps={transcriptionUtterances.length > 0}
             diffText={diffText}
             isTranscribing={isTranscribing}
             isCorrecting={isCorrecting}
-            maxLineLength={maxLineLength}
-            minLineLength={minLineLength}
-            enableVisualOptimization={enableVisualOptimization}
-            visualOptStart={visualOptStart}
-            visualOptEnd={visualOptEnd}
+            maxLineLength={subtitleOptions.maxLineLength}
+            minLineLength={subtitleOptions.minLineLength}
+            enableVisualOptimization={subtitleOptions.enableVisualOptimization}
+            visualOptStart={subtitleOptions.visualOptStart}
+            visualOptEnd={subtitleOptions.visualOptEnd}
             onReformatLines={handleReformatLines}
             onExportSrt={handleExportSrt}
             onExportTxt={handleExportTxt}

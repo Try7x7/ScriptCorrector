@@ -9,7 +9,7 @@
     <img src="https://img.shields.io/badge/License-GPL%20v3-blue.svg?style=for-the-badge" alt="GPL v3 License" />
   </a>
   <a href="#-自动化测试矩阵-test-suite">
-    <img src="https://img.shields.io/badge/Tests-40%2F40%20Passing-emerald?style=for-the-badge" alt="Tests 40/40 Passing" />
+    <img src="https://img.shields.io/badge/Tests-76%2F76%20Passing-emerald?style=for-the-badge" alt="Tests 76/76 Passing" />
   </a>
   <a href="https://deepmind.google/technologies/gemini/">
     <img src="https://img.shields.io/badge/Model-Gemini%203.8%20Flash-orange?style=for-the-badge&logo=google" alt="Gemini 3.8 Flash" />
@@ -22,20 +22,30 @@
 
 ## 📝 更新日志 (Changelog)
 
-### [v1.2.0] - 2026-10-22
+### [v1.2.0] - 2026-10-24
 - 🌐 **多语言全流程支持升级**：
   - 全面支持**西班牙语 (Español 默认)**、**法语 (Français)** 与 **英语 (English)** 的全流程智能校对与语音识别；
   - 西班牙语模式自动启用神圣人称代词首字母大写（Él, Su, Ti, Mí）、标点规范（¿? ¡! « »）以及西语语法断行规则；
   - 核对差异报告支持一键在**西班牙语全篇输出**与**中文输出**之间平滑切换。
+- 🚀 **纯文本自由校对模式**：无需音频，直接粘贴文稿即可一键调用 Gemini 进行智能校对与精准断行。
+- ⚡ **零 Token 本地断行微调与结果还原**：新增「重新断行」（毫秒级重排且零配额消耗）与「恢复 Gemini 结果」一键撤回机制。
+- ⏱️ **SRT 智能估算时间轴**：即使没有真实录音时间戳，也支持导出 SRT 字幕并醒目标注「估算时间」与通俗使用建议；TXT 纯文本随时可导出。
+- 🎙️ **Gladia 词级时间戳毫秒对齐**：深度使用 Gladia 传回来的词级（Word-Level）物理起止时间戳，通过首尾词动态双向锚定算法，确保校对分行后的每行字幕与说话人声音毫秒级严格对齐。
+- 💡 **生活化通俗气泡提示 (Tooltip)**：全面重构所有按钮的操作提示，彻底移除生硬工程术语，排版舒展直观。
+- 🎯 **排版双轨架构与 Knuth-Plass 保底切分**：
+  - 主链路采纳 Gemini 端到端输出自然断行；
+  - 客户端保留并优化 Knuth-Plass 动态规划断行算法，采用倒序长度剪枝（Reverse DP Pruning）与语法停顿代价模型，彻底解决行末悬空虚词与单字孤立成行问题。
 - 🧱 **系统架构模块化大重构**：
   - **提示词配置文件解耦**：将原嵌入在前端组件中的长达 130 行提示词核心规则完整剥离至独立的配置文件 `src/config/prompts.ts` 与全局常量配置 `src/config/constants.ts`；
-  - **组件化拆分**：原 1250 余行的单体 `App.tsx` 拆分为 `Header`、`QuotaAlert`、`TranscriptionPanel`、`ScriptPanel`、`SubtitleSettingsPanel`、`ResultsPanel` 等 6 大高内聚、低耦合子组件，主页面代码精简为清晰的流程编排器。
-- 🛡️ **单次文本 10 万字符防御边界**：
-  - 服务端新增严格的单次 Payload 上限防御，对于超过 100,000 字符（10 万字符）的请求直接予以拦截并返回 `HTTP 400 / PAYLOAD_TOO_LARGE`，保障服务资源与内存安全。
-- 🧪 **全链路 40 项自动化测试覆盖（9 大测试套件，100% 满额通过）**：
-  - 构建了基于 **Vitest + jsdom + @testing-library/react** 的全链路测试体系；
-  - 覆盖配额保护（503/429/0 次重试）、网关防御（HTML 200 Starting Server 唤醒识别）、服务端校验（10 万字符边界/限流）、Gladia 语音转录模拟、前端组件点击交互，以及端到端全流程模拟串联测试。
-- 📜 **引入 GNU General Public License v3.0 (GPL v3)** 开源许可证。
+  - **组件化拆分**：原 1250 余行的单体 `App.tsx` 拆分为 `Header`、`QuotaAlert`、`TranscriptionPanel`、`ScriptPanel`、`SubtitleSettingsPanel`、`ResultsPanel` 等 6 大高内聚、低耦合子组件。
+- 🛡️ **全面应用安全加固与防御边界**：
+  - 音频上传限制放宽至 50MB 并引入上传前置并发保护，杜绝内存 OOM 拒绝服务；
+  - 依赖漏洞清零（升级 multer ^2.5.0 与 body-parser 1.20.9，`npm audit` 0 漏洞）；
+  - 增加跨站 API 恶意调用防御（Anti-CSRF & Quota Drain Shield）；
+  - 单次文本 10 万字符防御边界与 `systemInstruction` 50,000 字符限制；
+  - 接口异常与全局错误堆栈全面脱敏（自动过滤 API Key、Token 与系统绝对路径），配置 `Permissions-Policy` 安全头；
+  - 引入 GNU General Public License v3.0 (GPL v3) 开源许可证。
+- 🧪 **测试矩阵扩充至 77 项**：覆盖 10 大测试套件，满额 100% 通过。
 
 ### [v1.1.0] - 2026-10-22
 - 🚀 **模型引擎全面升级至 `gemini-3.8-flash`**：
@@ -86,7 +96,7 @@
 - **视觉排版避险 (Visual Optimization)**：自动避开容易导致视觉疲劳的不协调断行区间。
 
 ### 4. 丰富多格式字幕导出
-- **标准 SRT 字幕 (`.srt`)**：根据音频总播放时长与各行字数比重自适应计算毫秒级时间戳，可无缝导入 **剪映 (CapCut)、Adobe Premiere Pro、Final Cut Pro、DaVinci Resolve** 等剪辑软件；
+- **标准 SRT 字幕 (`.srt`)**：深度依托 **Gladia 词级（Word-Level）物理毫秒时间戳**与首尾词动态双向锚定算法，确保校对分行后的每行字幕与说话人实际声音毫秒级严格对齐（无音频纯文本模式下则自动启用平滑字数比重预估）；可无缝导入 **剪映 (CapCut)、Adobe Premiere Pro、Final Cut Pro、DaVinci Resolve** 等主流剪辑软件直接使用或二次微调；
 - **时间轴纯文本 (`.txt`)**：带有清晰行号索引与时间范围的格式化审校记录。
 
 ---

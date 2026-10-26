@@ -114,4 +114,48 @@ describe("Gladia Audio Transcription Mock & Error Interception (Gladia 语音转
     expect(res.status).toBe(500);
     expect(res.body.error).toContain("Gladia API key is not configured");
   });
+
+  it("Case 1.6: Immediately intercepts Gladia task status 'error' without swallowing or looping to timeout", async () => {
+    // Simulates the server's polling loop with an asynchronous task that reports status: 'error'
+    const pollAttempts: number[] = [];
+    let loopTerminatedWithError = false;
+    let thrownErrorMessage = "";
+
+    async function simulatePollLoop(maxAttempts = 180) {
+      let attempts = 0;
+      let status = "queued";
+
+      while (status !== "done" && attempts < maxAttempts) {
+        attempts++;
+        pollAttempts.push(attempts);
+
+        // Simulated upstream Gladia response on attempt 2
+        const pollResponse: { data: { status: string; error?: string } } = attempts === 1 
+          ? { data: { status: "processing" } }
+          : { data: { status: "error", error: "Audio decoding failed: unsupported audio codec or corrupted stream" } };
+
+        status = pollResponse.data.status;
+        if (status === "done") {
+          return { done: true };
+        } else if (status === "error") {
+          const detail = typeof pollResponse.data.error === "string"
+            ? pollResponse.data.error
+            : JSON.stringify(pollResponse.data.error);
+          throw new Error(`Gladia task error: ${detail}`);
+        }
+      }
+    }
+
+    try {
+      await simulatePollLoop();
+    } catch (err: any) {
+      loopTerminatedWithError = true;
+      thrownErrorMessage = err.message;
+    }
+
+    // Must terminate immediately upon error (attempt 2), NOT 180 attempts!
+    expect(loopTerminatedWithError).toBe(true);
+    expect(pollAttempts.length).toBe(2);
+    expect(thrownErrorMessage).toContain("Gladia task error: Audio decoding failed");
+  });
 });

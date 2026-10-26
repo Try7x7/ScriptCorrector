@@ -1,5 +1,6 @@
 import React from 'react';
 import { CheckCircle2 } from 'lucide-react';
+import { Tooltip } from './Tooltip';
 
 interface SubtitleSettingsPanelProps {
   enableLineBreaks: boolean;
@@ -96,41 +97,47 @@ export const SubtitleSettingsPanel: React.FC<SubtitleSettingsPanelProps> = ({
               </div>
             </div>
 
-            {/* Quick Preset Buttons */}
+              {/* Quick Preset Buttons */}
             <div className="flex items-center gap-2 pt-1">
               <span className="text-[11px] text-zinc-500">常用预设:</span>
-              <button
-                type="button"
-                onClick={() => {
-                  onMaxLineLengthChange(25);
-                  onMinLineLengthChange(12);
-                  onVisualOptStartChange(20);
-                  onVisualOptEndChange(24);
-                }}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-all cursor-pointer ${
-                  maxLineLength === 25 && minLineLength === 12
-                    ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-semibold shadow-xs'
-                    : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'
-                }`}
-              >
-                ✓ 标准规范 (最长25 / 最小12)
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onMaxLineLengthChange(30);
-                  onMinLineLengthChange(12);
-                  onVisualOptStartChange(24);
-                  onVisualOptEndChange(29);
-                }}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-all cursor-pointer ${
-                  maxLineLength === 30 && minLineLength === 12
-                    ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-semibold shadow-xs'
-                    : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'
-                }`}
-              >
-                宽松排版 (最长30 / 最小12)
-              </button>
+              <Tooltip content="大家最常用的标准字幕规范：每行最多不超过 25 个字、最少不低于 12 个字，既保证观众看视频时一眼能扫完，字幕又不会太碎太满。">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onMaxLineLengthChange(25);
+                    onMinLineLengthChange(12);
+                    onVisualOptStartChange(20);
+                    onVisualOptEndChange(24);
+                  }}
+                  title="标准规范预设"
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-all cursor-pointer ${
+                    maxLineLength === 25 && minLineLength === 12
+                      ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-semibold shadow-xs'
+                      : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'
+                  }`}
+                >
+                  ✓ 标准规范 (最长25 / 最小12)
+                </button>
+              </Tooltip>
+              <Tooltip content="适合语速较快或台词偏长的视频：每行上限放宽到 30 个字，一行能容纳更多句子，画面上的字幕换行不会太频繁。">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onMaxLineLengthChange(30);
+                    onMinLineLengthChange(12);
+                    onVisualOptStartChange(24);
+                    onVisualOptEndChange(29);
+                  }}
+                  title="宽松排版预设"
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-all cursor-pointer ${
+                    maxLineLength === 30 && minLineLength === 12
+                      ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-semibold shadow-xs'
+                      : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'
+                  }`}
+                >
+                  宽松排版 (最长30 / 最小12)
+                </button>
+              </Tooltip>
             </div>
 
             <div className="pt-2 border-t border-zinc-100">

@@ -45,17 +45,29 @@
 
 ## 🚀 一键部署与在线访问 (One-Click Deploy & Access)
 
-### GitHub 仓库一键导入到全新 AI Studio 项目
+### 如何导入到 Google AI Studio (GitHub 仓库一键导入)
 如果您希望将本项目复制或一键导入到自己的 Google AI Studio 账号中运行：
 
+```text
+https://github.com/Try7x7/ScriptCorrector/
+导入这个仓库建立项目，直接导入，不用跑测试
+```
+
+![Google AI Studio 导入操作示意图](./src/assets/images/new.png)
+
+> 💡 **导入前提示**：
+> **首次导入耗时**：第一次导入建立项目时，云端平台会自动分配容器并拉取安装依赖环境，**整个过程大约需要 2 分钟左右**，请耐心等待界面就绪，无需手动干预。
+
+#### 详细导入步骤：
 1. **直接导入**：
    - 打开 [Google AI Studio 控制台 (aistudio.google.com)](https://aistudio.google.com/)；
-   - 点击左侧菜单栏的 **Build** -> **Import from GitHub**；
-   - 粘贴本项目的 GitHub 仓库链接，点击导入确认。
+   - 点击左侧菜单栏的 **Build** -> **Import from GitHub**（如未连接会提示授权登录 GitHub 。在 Google AI Studio 中连接并导入 GitHub 仓库需要先完成 GitHub 授权，因此需要先注册或登录您的 [GitHub 账号](https://github.com/)。）；
+   - 输入并粘贴仓库地址：`https://github.com/Try7x7/ScriptCorrector/`；
+   - 点击导入建立项目（**直接导入，不用跑测试**）。
 2. **零配置自动初始化**：
    - 平台将自动识别项目配置 (`metadata.json` 与 `package.json`)；
-   - 自动拉取依赖、挂载服务端 Gemini API 凭证通道；
-   - 弹出 `Enter your environment variable to continue: GLADIA_API_KEY` 提示，填入您的 Gladia Key 即可在 1 分钟内完成全量部署与启动！
+   - 自动拉取依赖、挂载服务端 Gemini API 凭证通道（初次加载约耗时 2 分钟）；
+   - 弹出 `Enter your environment variable to continue: GLADIA_API_KEY` 提示，填入您的 Gladia Key 即可完成全量部署并正常使用！
 
 ---
 

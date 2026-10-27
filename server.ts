@@ -85,10 +85,11 @@ const upload = multer({
     const isMimeAllowed = ALLOWED_MIME_TYPES.has(file.mimetype) || file.mimetype.startsWith('audio/');
     const isExtAllowed = ALLOWED_EXTENSIONS.has(ext);
 
-    if (isMimeAllowed || isExtAllowed) {
+    // Security: Enforce strict AND logic (both valid audio MIME and valid extension required)
+    if (isMimeAllowed && isExtAllowed) {
       cb(null, true);
     } else {
-      cb(new Error(`不支持的文件格式。请上传音频文件 (支持格式: ${Array.from(ALLOWED_EXTENSIONS).join(', ')})`));
+      cb(new Error(`不支持的文件格式。请上传合法的音频文件 (支持格式: ${Array.from(ALLOWED_EXTENSIONS).join(', ')})`));
     }
   }
 });
@@ -116,6 +117,47 @@ function getGeminiClient(): GoogleGenAI {
 // Helper to wait
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Built-in resilient fallback prompt template
+const FALLBACK_PROMPT_TEMPLATE = `你是一个专业的音频转录编辑，专门处理法语神学内容的字幕校对。
+你的任务是将语音识别生成的原始文本（文本A）修正为准确、通顺且符合神学规范的字幕文本（文本C），同时参考文案原稿（文本B）进行核对。
+
+### 核心原则：采用“双重标准”处理策略
+1. **经文与神话语部分 (Strict Mode)**：严格对齐文案（文本B）。
+2. **口语讲解部分 (Faithful Mode)**：忠实还原语音（文本A），仅修复错误。
+
+### 详细修正规则：
+
+#### 1. 经文与神话语部分 (Strict Mode)
+- **适用范围**：引用圣经经文、直接引用上帝的话（Dieu dit / Jésus dit...）、祷告词。
+- **绝对权威**：此部分的拼写、标点、措辞必须 100% 严格按照文本B执行。即使说话人读错或稍微改词，优先修正为文本B的标准写法。
+- **神性代词大写 (Capitalisation Divine)**：所有指代上帝、耶稣、圣灵的代词必须首字母大写（如：Il, Son, Lui, Ton, Moi）。
+- **标点符号**：必须使用法语引号 « ... » 包裹经文或神的话语。严格跟随文本B的逗号、句号位置。
+- **专有名词与章节**：书卷名必须准确且大写（如 Matthieu, Ésaïe）。章节格式统一为“书名 章:节”（如 Jean 3:16）。
+
+#### 2. 口语讲解/非经文部分 (Faithful Mode)
+- **适用范围**：讲员的解释、见证、引导语、结尾问候。
+- **忠实还原语音**：不要照搬文本B。如果说话人改词、加词或换了说法，必须记录说话人实际说的内容。
+- **保留口语特征**：保留连接词和语气词（如：et bah, en fait, donc, alors, du coup）和口语语法结构。
+- **修复 ASR 错误**：修复同音词错误（如 verre -> ver, encre -> ancre）、动词变位错误、以及无意义的听辨错误。
+
+#### 3. 通用格式规范
+- **数字**：将数字 1, 2, 3 改为单词 un/une, deux, trois（除非是章节号或年份）。
+- **缩写**：N° -> numéro。
+{{lineBreakRule}}
+
+### 输出要求：
+- 请以 JSON 格式输出，包含以下两个字段：
+  - \`correctedText\`: 最终的文本C。特别注意：如果启用了断行，行与行之间必须使用换行符 (\\n) 分隔。
+  - \`differences\`: 文本C与文本B（文案原稿）的差异分析。请列出说话人改词、加词、漏词或与文案不一致的地方（**请务必使用中文回复此字段**）。
+- 不要包含 markdown 代码块标记（如 \\\`\\\`\\\`json），直接输出 JSON 字符串。
+
+---
+**文本A (原始识别结果)：**
+{{transcribedText}}
+
+**文本B (文案原稿)：**
+{{referenceText}}`;
+
 // Prompt template path and in-memory cache
 const PROMPT_TEMPLATE_PATH = path.join(__dirname, "config", "promptTemplate.md");
 let cachedPromptTemplate: string = "";
@@ -130,13 +172,15 @@ function loadPromptTemplate(): string {
       console.log(`[PromptTemplate] Successfully loaded prompt template from ${PROMPT_TEMPLATE_PATH} (${cachedPromptTemplate.length} chars)`);
       return cachedPromptTemplate;
     } else {
-      console.warn(`[PromptTemplate] Warning: ${PROMPT_TEMPLATE_PATH} not found.`);
+      console.warn(`[PromptTemplate] Warning: ${PROMPT_TEMPLATE_PATH} not found, falling back to built-in template.`);
     }
   } catch (err: any) {
     console.error(`[PromptTemplate] Error reading prompt template from ${PROMPT_TEMPLATE_PATH}:`, err?.message || err);
   }
 
-  return "";
+  // Resilient fallback
+  cachedPromptTemplate = FALLBACK_PROMPT_TEMPLATE;
+  return cachedPromptTemplate;
 }
 
 // Pre-load prompt template into memory at startup
@@ -196,6 +240,8 @@ async function startServer() {
   app.use((req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("X-XSS-Protection", "0");
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
     next();
   });
 
@@ -446,7 +492,6 @@ async function startServer() {
         transcribedText, 
         referenceText, 
         options = {}, 
-        prompt: rawPrompt, 
         model = "gemini-3.8-flash" 
       } = req.body;
 
@@ -454,24 +499,17 @@ async function startServer() {
       const validatedModel = ALLOWED_MODELS.has(model) ? model : "gemini-3.8-flash";
       targetModel = validatedModel === "gemini-3.6-flash" ? "gemini-3.8-flash" : validatedModel;
 
-      // Input validation and safe prompt construction
-      let finalPrompt = "";
-
-      if (typeof transcribedText === "string" && typeof referenceText === "string") {
-        // Enforce maximum length of 100,000 characters to prevent buffer exhaustion
-        if (transcribedText.length > 100000 || referenceText.length > 100000) {
-          return res.status(400).json({ error: "文本长度超过最大限制 (Text exceeds 100,000 characters limit)" });
-        }
-        finalPrompt = buildCorrectionPrompt(transcribedText, referenceText, options);
-      } else if (typeof rawPrompt === "string" && rawPrompt.trim()) {
-        // Fallback for legacy prompt with length check
-        if (rawPrompt.length > 150000) {
-          return res.status(400).json({ error: "Prompt 长度超出限制 (Prompt exceeds maximum length)" });
-        }
-        finalPrompt = rawPrompt;
-      } else {
-        return res.status(400).json({ error: "缺少必要的文本参数 (Missing transcribedText and referenceText or prompt)" });
+      // Security: Closed-loop prompt construction. Disallow client-provided raw prompts to prevent arbitrary LLM proxying.
+      if (typeof transcribedText !== "string" || typeof referenceText !== "string") {
+        return res.status(400).json({ error: "缺少必要的文本参数 (Missing transcribedText or referenceText)" });
       }
+
+      // Enforce maximum length of 100,000 characters to prevent buffer exhaustion DoS
+      if (transcribedText.length > 100000 || referenceText.length > 100000) {
+        return res.status(400).json({ error: "文本长度超过最大限制 (Text exceeds 100,000 characters limit)" });
+      }
+
+      const finalPrompt = buildCorrectionPrompt(transcribedText, referenceText, options);
 
       let ai: GoogleGenAI;
       try {
@@ -546,12 +584,18 @@ async function startServer() {
         quotaHint = "请检查容器外网访问状态或稍候重试。";
       }
 
+      // Security: Strip potential credentials, API keys or sensitive paths from error message
+      const rawDetails = String(error?.message || error || "Unknown error");
+      const safeDetails = rawDetails
+        .replace(/([a-zA-Z0-9_\-]{32,})/g, (m) => m.slice(0, 4) + "****" + m.slice(-4))
+        .replace(/([A-Za-z]:\\[^:\s]+|\/[^:\s]+\/[^:\s]+)/g, "[REDACTED_PATH]");
+
       return res.status(statusCode).json({
         error: errorTitle,
         statusCode,
         suspectedReason,
         quotaHint,
-        details: error?.message || String(error)
+        details: safeDetails
       });
     }
   });

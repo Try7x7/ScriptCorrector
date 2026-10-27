@@ -362,9 +362,10 @@ export async function startServer(port: number = PORT): Promise<{ app: express.A
     next();
   });
 
-  // Limit JSON/URL-encoded payload size to 5MB to prevent memory exhaustion DoS
-  app.use(express.json({ limit: "5mb" }));
-  app.use(express.urlencoded({ extended: true, limit: "5mb" }));
+  // Limit JSON/URL-encoded payload size to 5MB and disable decompression stream inflation
+  // Mitigates CVE-2026-111181 (GHSA-27r3-jxmh-p828 DoS via trailing bytes on decompression)
+  app.use(express.json({ limit: "5mb", inflate: false }));
+  app.use(express.urlencoded({ extended: true, limit: "5mb", inflate: false }));
 
   // Request logger
   app.use((req, res, next) => {
